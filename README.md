@@ -1,6 +1,30 @@
-# HE Status Page
+<div align="center">
 
-An open-source IT status page built by a university IT shop, for higher education. It gives your community a single, honest place to see whether email, the LMS, the network, SSO, and your student information system are up — and to subscribe for updates when they are not. Status is collected automatically by polling the upstream providers you already depend on (Microsoft 365, Google Workspace, Zoom, and friends), supplemented with admin-published incidents and maintenance windows. Everything visible to visitors — the site name, organization, logo, and accent color — is set through configuration, so rebranding it for your institution is a matter of editing a handful of environment variables rather than forking the code. The frontend is built with accessibility in mind (semantic markup, keyboard-navigable admin, WCAG-minded color and contrast choices).
+<img src="docs/logo.svg" alt="" width="88" height="88" />
+
+<h1>HE Status Page</h1>
+
+<p><strong>A self-hosted IT status page for higher education.</strong><br/>
+Automatically polls the providers you already depend on, publishes incidents and scheduled maintenance, and rebrands to your institution with a handful of environment variables — no fork required.</p>
+
+<p>
+<img alt="status: v1.0" src="https://img.shields.io/badge/status-v1.0-1e40af">
+<img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-1e40af">
+<img alt="stack: Next.js 16 | Express 4 | Postgres 16" src="https://img.shields.io/badge/stack-Next.js%2016%20%7C%20Express%204%20%7C%20Postgres%2016-334155">
+<img alt="SSO: CAS | OIDC | SAML" src="https://img.shields.io/badge/SSO-CAS%20%7C%20OIDC%20%7C%20SAML-16a34a">
+</p>
+
+<p>
+<a href="#quick-start-development">Quick Start</a> ·
+<a href="#features">Features</a> ·
+<a href="#configuration">Configuration</a> ·
+<a href="#deployment">Deployment</a> ·
+<a href="#provider-adapters">Adapters</a>
+</p>
+
+</div>
+
+Status is collected automatically by polling the upstream providers you already depend on (Microsoft 365, Google Workspace, Zoom, and friends), supplemented with admin-published incidents and maintenance windows. Everything visible to visitors — the site name, organization, logo, and accent color — is set through configuration, so rebranding it for your institution is a matter of editing a handful of environment variables rather than forking the code. The frontend is built with accessibility in mind (semantic markup, keyboard-navigable admin, WCAG-minded color and contrast choices).
 
 ## Demo
 
