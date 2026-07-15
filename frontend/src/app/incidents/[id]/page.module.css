@@ -1,0 +1,224 @@
+.container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+}
+
+.breadcrumb {
+  margin: 0 0 1.5rem 0;
+}
+
+.back {
+  color: var(--color-primary, #1e40af);
+  text-decoration: none;
+  font-size: 0.875rem;
+}
+
+.back:hover {
+  text-decoration: underline;
+}
+
+.empty {
+  background: white;
+  border-radius: 8px;
+  padding: 2rem;
+  text-align: center;
+  color: #6b7280;
+  border: 1px solid #e5e7eb;
+}
+
+.headerBlock {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.badges {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.25rem 0.625rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.badge.impact_critical { background: var(--status-outage, #dc2626); color: white; }
+.badge.impact_major { background: #fef3c7; color: #92400e; }
+.badge.impact_minor { background: #6b7280; color: white; }
+
+.statusBadge {
+  display: inline-block;
+  padding: 0.25rem 0.625rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background: white;
+  border: 1px solid #d1d5db;
+  color: #374151;
+}
+
+.statusBadge.status_investigating { color: #b45309; border-color: #fcd34d; background: #fef3c7; }
+.statusBadge.status_identified { color: #1d4ed8; border-color: #93c5fd; background: #dbeafe; }
+.statusBadge.status_monitoring { color: #5b21b6; border-color: #c4b5fd; background: #ede9fe; }
+.statusBadge.status_resolved { color: #166534; border-color: #86efac; background: #dcfce7; }
+
+.autoBadge {
+  font-size: 0.7rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 12px;
+  background: #f3f4f6;
+  color: #6b7280;
+  font-weight: 500;
+  border: 1px solid #e5e7eb;
+}
+
+.title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 0.5rem 0;
+  line-height: 1.3;
+}
+
+.serviceName {
+  color: #4b5563;
+  font-size: 0.9375rem;
+  margin: 0 0 1rem 0;
+}
+
+.metaList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0 0 0;
+  padding: 1rem 0 0 0;
+  border-top: 1px solid #f3f4f6;
+}
+
+.metaList > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.metaList dt {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.metaList dd {
+  font-size: 0.875rem;
+  color: #111827;
+  margin: 0;
+}
+
+.ongoing {
+  color: var(--status-outage-text, #b91c1c);
+  font-weight: 600;
+}
+
+.timelineSection {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 1.5rem;
+}
+
+.timelineHeading {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #111827;
+  margin: 0 0 1.25rem 0;
+}
+
+.timeline {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  position: relative;
+}
+
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 11px;
+  top: 12px;
+  bottom: 12px;
+  width: 2px;
+  background: #e5e7eb;
+}
+
+.timelineItem {
+  display: flex;
+  gap: 1rem;
+  padding-bottom: 1.25rem;
+  position: relative;
+}
+
+.timelineItem:last-child {
+  padding-bottom: 0;
+}
+
+.timelineMarker {
+  flex-shrink: 0;
+  width: 24px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 4px;
+  z-index: 1;
+}
+
+.timelineDot {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #d1d5db;
+  border: 3px solid white;
+  box-shadow: 0 0 0 2px #d1d5db;
+}
+
+.timelineDot.status_investigating { background: #fcd34d; box-shadow: 0 0 0 2px #fcd34d; }
+.timelineDot.status_identified { background: #93c5fd; box-shadow: 0 0 0 2px #93c5fd; }
+.timelineDot.status_monitoring { background: #c4b5fd; box-shadow: 0 0 0 2px #c4b5fd; }
+.timelineDot.status_resolved { background: #86efac; box-shadow: 0 0 0 2px #86efac; }
+
+.timelineContent {
+  flex: 1;
+  min-width: 0;
+}
+
+.timelineHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.375rem;
+  flex-wrap: wrap;
+}
+
+.timelineTime {
+  font-size: 0.8125rem;
+  color: #6b7280;
+}
+
+.timelineMessage {
+  margin: 0;
+  font-size: 0.9375rem;
+  color: #374151;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}

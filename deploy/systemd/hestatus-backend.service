@@ -1,0 +1,25 @@
+[Unit]
+Description=HE Status Page Backend API
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=hestatus
+Group=hestatus
+WorkingDirectory=/opt/hestatus/hestatus
+EnvironmentFile=/opt/hestatus/hestatus/.env
+ExecStart=/usr/bin/node backend/dist/index.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hestatus-backend
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

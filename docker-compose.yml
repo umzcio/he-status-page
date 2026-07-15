@@ -1,0 +1,107 @@
+services:
+  hestatus-db:
+    image: postgres:16-alpine
+    container_name: hestatus-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hestatus}
+      POSTGRES_USER: ${POSTGRES_USER:-hestatus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - hestatus-pgdata:/var/lib/postgresql/data
+    networks:
+      - hestatus-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hestatus}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # One-shot migration runner. Applies database/*.sql migrations via
+  # backend/src/db/migrate.js (copied into the backend image as plain JS, see
+  # backend/Dockerfile). Exits after running; backend/poller wait for it to
+  # finish successfully before starting.
+  #
+  # Seeding (starter services + admin account) is optional and manual:
+  #   docker compose run --rm hestatus-migrate node backend/dist/db/seed.js
+  hestatus-migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: hestatus-migrate
+    restart: "no"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hestatus}:${POSTGRES_PASSWORD}@hestatus-db:5432/${POSTGRES_DB:-hestatus}
+    command: ["node", "backend/dist/db/migrate.js"]
+    depends_on:
+      hestatus-db:
+        condition: service_healthy
+    networks:
+      - hestatus-network
+
+  hestatus-backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: hestatus-backend
+    restart: unless-stopped
+    expose:
+      - "3000"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hestatus}:${POSTGRES_PASSWORD}@hestatus-db:5432/${POSTGRES_DB:-hestatus}
+    depends_on:
+      hestatus-db:
+        condition: service_healthy
+      hestatus-migrate:
+        condition: service_completed_successfully
+    networks:
+      - hestatus-network
+
+  hestatus-frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+        NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+        NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-}
+        NEXT_PUBLIC_SITE_NAME: ${NEXT_PUBLIC_SITE_NAME:-}
+        NEXT_PUBLIC_ORG_NAME: ${NEXT_PUBLIC_ORG_NAME:-}
+        NEXT_PUBLIC_LOGO_PATH: ${NEXT_PUBLIC_LOGO_PATH:-}
+        NEXT_PUBLIC_PRIMARY_COLOR: ${NEXT_PUBLIC_PRIMARY_COLOR:-}
+    container_name: hestatus-frontend
+    restart: unless-stopped
+    expose:
+      - "3000"
+    depends_on:
+      - hestatus-backend
+    networks:
+      - hestatus-network
+
+  hestatus-poller:
+    build:
+      context: .
+      dockerfile: poller/Dockerfile
+    container_name: hestatus-poller
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hestatus}:${POSTGRES_PASSWORD}@hestatus-db:5432/${POSTGRES_DB:-hestatus}
+    depends_on:
+      hestatus-db:
+        condition: service_healthy
+      hestatus-migrate:
+        condition: service_completed_successfully
+    networks:
+      - hestatus-network
+
+volumes:
+  hestatus-pgdata:
+    name: hestatus_pgdata
+
+networks:
+  hestatus-network:
+    driver: bridge
+    name: hestatus-network

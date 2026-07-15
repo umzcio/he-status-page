@@ -1,0 +1,226 @@
+.section {
+  margin-bottom: 1rem;
+}
+
+/* Accordion heading wrapper */
+.heading {
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+/* Accordion header */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 1rem 1.5rem;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+  font-family: inherit;
+  text-align: left;
+}
+
+.header:hover {
+  background-color: #f9fafb;
+}
+
+.headerIssue {
+  border-color: var(--status-degraded);
+}
+
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* Status dot in header */
+.indicator {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.indicator.operational {
+  background-color: var(--status-operational);
+}
+
+.indicator.degraded {
+  background-color: var(--status-degraded);
+  animation: glow-yellow 1.5s ease-in-out infinite;
+}
+
+.indicator.outage {
+  background-color: var(--status-outage);
+  animation: glow-red 1s ease-in-out infinite;
+}
+
+.indicator.maintenance {
+  background-color: var(--status-maintenance);
+}
+
+.indicator.unknown {
+  background-color: var(--status-unknown);
+}
+
+/* Category title */
+.title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #111827;
+  margin: 0;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.count {
+  font-size: 0.8rem;
+  color: #6b7280;
+  font-weight: 400;
+}
+
+/* Issue badge */
+.issuebadge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.issuebadge.degraded {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.issuebadge.outage {
+  background-color: #fee2e2;
+  color: #991b1b;
+}
+
+.issuebadge.maintenance {
+  background-color: #f3f4f6;
+  color: #4b5563;
+}
+
+.issuebadge.unknown {
+  background-color: #f3f4f6;
+  color: #4b5563;
+}
+
+/* Status label */
+.statusLabel {
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.statusLabel.operational {
+  color: var(--status-operational-text);
+}
+
+.statusLabel.degraded {
+  color: var(--status-degraded-text);
+}
+
+.statusLabel.outage {
+  color: var(--status-outage-text);
+}
+
+.statusLabel.maintenance {
+  color: var(--status-maintenance-text);
+}
+
+.statusLabel.unknown {
+  color: var(--status-unknown-text);
+}
+
+/* Chevron */
+.chevron {
+  width: 20px;
+  height: 20px;
+  color: #6b7280;
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+/* Collapsible list */
+.list {
+  background: white;
+  border-radius: 0 0 8px 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.2s ease;
+}
+
+.listOpen {
+  max-height: 5000px;
+  opacity: 1;
+  visibility: visible;
+  border: 1px solid #e5e7eb;
+  border-top: none;
+  margin-top: -4px;
+}
+
+.listClosed {
+  max-height: 0;
+  opacity: 0;
+  visibility: hidden;
+  border: none;
+}
+
+/* Accessibility: Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+
+  .list {
+    transition: none;
+  }
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+  .header {
+    padding: 0.875rem 1rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .headerLeft {
+    gap: 0.5rem;
+  }
+
+  .headerRight {
+    gap: 0.5rem;
+  }
+
+  .title {
+    font-size: 0.9rem;
+  }
+
+  .count {
+    display: none;
+  }
+
+  .statusLabel {
+    font-size: 0.8rem;
+  }
+}

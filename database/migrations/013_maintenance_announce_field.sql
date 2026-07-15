@@ -1,0 +1,2 @@
+ALTER TABLE planned_maintenances
+  ADD COLUMN IF NOT EXISTS announce BOOLEAN NOT NULL DEFAULT true;

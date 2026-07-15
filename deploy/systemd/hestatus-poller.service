@@ -1,0 +1,25 @@
+[Unit]
+Description=HE Status Page Poller
+After=network.target hestatus-backend.service
+Wants=hestatus-backend.service
+
+[Service]
+Type=simple
+User=hestatus
+Group=hestatus
+WorkingDirectory=/opt/hestatus/hestatus
+EnvironmentFile=/opt/hestatus/hestatus/.env
+ExecStart=/usr/bin/node poller/dist/index.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hestatus-poller
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

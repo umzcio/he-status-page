@@ -1,0 +1,105 @@
+/* Brand Colors (override --color-primary at runtime via NEXT_PUBLIC_PRIMARY_COLOR) */
+:root {
+  --color-primary: #1e40af;
+  --color-primary-dark: #1e3a8a;
+  --footer-bg: #1f2937;
+  --footer-link: #93c5fd;
+
+  /* Status colors */
+  --status-operational: #10b981;
+  --status-degraded: #f59e0b;
+  --status-outage: #ef4444;
+  --status-maintenance: #808080;
+  --status-unknown: #9ca3af;
+
+  /* AA-compliant text color variants (4.5:1+ on white) */
+  --status-operational-text: #047857;
+  --status-degraded-text: #b45309;
+  --status-outage-text: #dc2626;
+  --status-maintenance-text: #4b5563;
+  --status-unknown-text: #4b5563;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  line-height: 1.6;
+  color: #1f2937;
+  background-color: #e5e7eb;
+}
+
+/* Accessibility: Focus indicators */
+*:focus {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Skip to main content - Accessibility */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--color-primary);
+  color: white;
+  padding: 8px;
+  text-decoration: none;
+  z-index: 100;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
+/* Glow animations */
+@keyframes glow-green {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 0 8px rgba(16, 185, 129, 0.6);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 0 15px rgba(16, 185, 129, 0.8);
+  }
+}
+
+@keyframes glow-yellow {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 0 10px rgba(245, 158, 11, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 0 18px rgba(245, 158, 11, 0.9);
+  }
+}
+
+@keyframes glow-red {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 0 12px rgba(239, 68, 68, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 0 20px rgba(239, 68, 68, 0.95);
+  }
+}
+
+/* Visually hidden but accessible to screen readers */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Accessibility: Respect reduced motion preferences (WCAG 2.3.1) */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

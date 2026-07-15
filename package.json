@@ -1,0 +1,43 @@
+{
+  "name": "he-status-page",
+  "version": "1.0.0",
+  "description": "An open-source IT status page for higher education",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "backend",
+    "frontend",
+    "poller"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev --workspace=backend",
+    "dev:poller": "npm run dev --workspace=poller",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "predev": "npm run build --workspace=shared",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:poller\"",
+    "db:migrate": "npm run migrate --workspace=backend",
+    "db:seed": "npm run seed --workspace=backend",
+    "db:setup": "npm run db:migrate && npm run db:seed",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "overrides": {
+    "glob": "^10.5.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "postcss": "^8.5.10",
+    "typescript": "^5.3.3"
+  },
+  "allowScripts": {
+    "bcrypt@6.0.0": true,
+    "esbuild@0.28.1": true,
+    "unrs-resolver@1.12.2": true
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "@he-status/shared",
+  "version": "1.0.0",
+  "description": "Shared constants, templates, and utilities for HE Status services",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "axios": "^1.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.5",
+    "typescript": "^5.3.3"
+  }
+}

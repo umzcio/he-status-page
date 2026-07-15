@@ -1,0 +1,87 @@
+.container {
+  margin-top: 0.625rem;
+  width: 100%;
+}
+
+.bar {
+  display: flex;
+  gap: 2px;
+  align-items: stretch;
+  height: 28px;
+  width: 100%;
+}
+
+.day {
+  flex: 1;
+  min-width: 3px;
+  border-radius: 2px;
+  transition: transform 0.1s ease;
+  cursor: default;
+}
+
+.day:hover {
+  transform: scaleY(1.15);
+}
+
+.day.operational {
+  background-color: var(--status-operational, #16a34a);
+}
+
+.day.degraded {
+  background-color: var(--status-degraded, #ca8a04);
+}
+
+.day.outage {
+  background-color: var(--status-outage, #dc2626);
+}
+
+.day.maintenance {
+  background-color: var(--status-maintenance, #2563eb);
+}
+
+.day.unknown {
+  background-color: #9ca3af;
+}
+
+.day.no_data {
+  background-color: #e5e7eb;
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.375rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.dateLabel {
+  font-variant-numeric: tabular-nums;
+}
+
+.uptime {
+  font-weight: 600;
+  color: #374151;
+}
+
+.loading {
+  height: 28px;
+  width: 100%;
+  background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 2px;
+  margin-top: 0.625rem;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@media (max-width: 768px) {
+  .bar {
+    height: 24px;
+  }
+}

@@ -1,0 +1,27 @@
+[Unit]
+Description=HE Status Page Frontend (Next.js)
+After=network.target
+
+[Service]
+Type=simple
+User=hestatus
+Group=hestatus
+WorkingDirectory=/opt/hestatus/hestatus/frontend
+EnvironmentFile=/opt/hestatus/hestatus/.env
+Environment=NODE_ENV=production
+Environment=PORT=3001
+Environment=HOSTNAME=127.0.0.1
+ExecStart=/usr/bin/node /opt/hestatus/hestatus/frontend/.next/standalone/frontend/server.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hestatus-frontend
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
