@@ -26,6 +26,8 @@ import adminIncidentsRoutes from './routes/adminIncidents';
 import adminMaintenanceRoutes from './routes/adminMaintenance';
 import { startNotificationProcessor, stopNotificationProcessor } from './lib/notifications';
 import { PgRateLimitStore } from './lib/pgRateLimitStore';
+import { resolveTrustProxy } from './lib/trustProxy';
+import { accountClientLimiter, accountLimiter } from './lib/loginThrottle';
 import logger from './lib/logger';
 
 dotenv.config({ path: path.join(__dirname, '../../.env') });
@@ -37,11 +39,16 @@ dotenv.config({ path: path.join(__dirname, '../../.env') });
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Trust proxy (needed behind nginx reverse proxy, and any load balancer in front of it).
-// Set to the number of proxy hops between clients and this server so Express resolves
-// req.ip from X-Forwarded-For correctly (used by rate limiting, logging, etc).
-const trustProxyHops = parseInt(process.env.TRUST_PROXY_HOPS || '1', 10);
-app.set('trust proxy', trustProxyHops);
+// Trust proxy: only peers at these addresses may set X-Forwarded-For, so
+// req.ip (rate limiting, logging) can't be forged by a direct client. See
+// lib/trustProxy.ts.
+const trustProxy = resolveTrustProxy();
+trustProxy.warnings.forEach((w) => logger.warn(w));
+app.set('trust proxy', trustProxy.value);
+
+// Bind to loopback by default so only a same-host reverse proxy can reach the
+// API. Containers and split-host deployments set HOST=0.0.0.0 explicitly.
+const HOST = process.env.HOST || '127.0.0.1';
 
 // Rate limiters (PostgreSQL-backed store persists across restarts)
 // publicLimiter can be disabled when a load balancer/upstream proxy already
@@ -115,7 +122,7 @@ app.use('/api/services', publicLimiter, servicesRoutes);
 app.use('/api/incidents', publicLimiter, incidentsRoutes);
 app.use('/api/admin/incidents', adminIncidentsRoutes);
 app.use('/api/admin/maintenance', adminMaintenanceRoutes);
-app.use('/api/admin/login', authLimiter);
+app.use('/api/admin/login', authLimiter, accountClientLimiter, accountLimiter);
 app.use('/api/admin/cas', authLimiter);
 app.use('/api/admin/oidc', authLimiter);
 app.use('/api/admin/saml', authLimiter);
@@ -155,8 +162,8 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   });
 });
 
-const server = app.listen(PORT, () => {
-  logger.info({ port: PORT, env: process.env.NODE_ENV, frontendUrl: process.env.FRONTEND_URL }, 'HE Status API started');
+const server = app.listen(Number(PORT), HOST, () => {
+  logger.info({ host: HOST, port: PORT, env: process.env.NODE_ENV, frontendUrl: process.env.FRONTEND_URL }, 'HE Status API started');
 
   // Start notification queue processor
   startNotificationProcessor();

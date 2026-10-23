@@ -68,10 +68,10 @@ describe('backend/src/lib/authCode', () => {
         expect(params[0]).toBe(expectedHash);
         return Promise.resolve({ rows: [{ user_id: 'user-123' }] });
       }
-      if (/SELECT id, email, name, role FROM users/i.test(sql)) {
+      if (/SELECT id, email, name, role, token_version FROM users/i.test(sql)) {
         expect(params[0]).toBe('user-123');
         return Promise.resolve({
-          rows: [{ id: 'user-123', email: 'a@x.edu', name: 'A', role: 'admin' }],
+          rows: [{ id: 'user-123', email: 'a@x.edu', name: 'A', role: 'admin', token_version: 2 }],
         });
       }
       return Promise.resolve({ rows: [] });
@@ -80,7 +80,7 @@ describe('backend/src/lib/authCode', () => {
     const { consumeAuthCode } = await import('../lib/authCode');
     const user = await consumeAuthCode(code);
 
-    expect(user).toEqual({ id: 'user-123', email: 'a@x.edu', name: 'A', role: 'admin' });
+    expect(user).toEqual({ id: 'user-123', email: 'a@x.edu', name: 'A', role: 'admin', token_version: 2 });
   });
 
   it('consumeAuthCode returns null on a replayed (already-consumed) code', async () => {
@@ -95,7 +95,7 @@ describe('backend/src/lib/authCode', () => {
 
     expect(user).toBeNull();
     // Must NOT attempt to look up a user if no row was claimed.
-    const selectCall = query.mock.calls.find((c) => /SELECT id, email, name, role FROM users/i.test(c[0]));
+    const selectCall = query.mock.calls.find((c) => /SELECT id, email, name, role, token_version FROM users/i.test(c[0]));
     expect(selectCall).toBeUndefined();
   });
 
@@ -129,7 +129,7 @@ describe('backend/src/lib/authCode', () => {
   it('consumeAuthCode returns null if the claimed user no longer exists', async () => {
     query.mockImplementation((sql: string) => {
       if (/UPDATE auth_codes/i.test(sql)) return Promise.resolve({ rows: [{ user_id: 'ghost' }] });
-      if (/SELECT id, email, name, role FROM users/i.test(sql)) return Promise.resolve({ rows: [] });
+      if (/SELECT id, email, name, role, token_version FROM users/i.test(sql)) return Promise.resolve({ rows: [] });
       return Promise.resolve({ rows: [] });
     });
 

@@ -249,6 +249,10 @@ export async function resetUserPassword(id: string, password: string): Promise<v
   await adminApi.post(`${API_URL}/api/admin/users/${id}/reset-password`, { password });
 }
 
+export async function revokeUserSessions(id: string): Promise<void> {
+  await adminApi.post(`${API_URL}/api/admin/users/${id}/revoke-sessions`);
+}
+
 // --- API Key Management ---
 
 export interface ApiKey {

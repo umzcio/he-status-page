@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { body, param, validationResult } from 'express-validator';
 import pool from '../db/connection';
 import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
+import { randomBytes } from 'node:crypto';
 import { authMiddleware, requireRole, AuthRequest } from './middleware/auth';
 import { requireCsrf } from './middleware/csrf';
 import * as cas from '../lib/cas';
@@ -12,13 +12,19 @@ import { issueAuthCode, consumeAuthCode } from '../lib/authCode';
 import { notifyTeams } from '../lib/teams';
 import { logAdminAction } from '../lib/adminLog';
 import { autoCreateIncident, autoResolveIncident } from '../lib/incidents';
-import { JWT_SECRET, JWT_EXPIRES_IN } from '../lib/config';
-import { issueSession, clearSession } from '../lib/authCookies';
+import { issueSession, clearSession, SESSION_COOKIE } from '../lib/authCookies';
+import { signSession, revokeSessionToken } from '../lib/session';
+import { setDeviceCookie } from '../lib/loginThrottle';
 
 const router = Router();
 
 // Only these roles may perform mutating admin actions; viewer stays read-only.
 const MUTATE_ROLES = ['admin', 'super_admin'];
+
+// Compared against when the email is unknown or the account has no password,
+// so every failed login costs one bcrypt comparison and response timing does
+// not reveal which emails have accounts. Same cost factor as users.ts.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync(randomBytes(16).toString('hex'), 10);
 
 // GET /api/admin/cas/login - Redirect to CAS login
 router.get('/cas/login', (req, res) => {
@@ -93,11 +99,7 @@ router.post('/auth/exchange', [
     }
 
     // Sign the SAME JWT the password-login path signs.
-    const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
-      JWT_SECRET,
-      { expiresIn: JWT_EXPIRES_IN }
-    );
+    const token = signSession(user);
 
     await pool.query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [user.id]);
 
@@ -119,11 +121,21 @@ router.post('/auth/exchange', [
   }
 });
 
-// POST /api/admin/auth/logout - Clear the session cookies. Not behind
-// authMiddleware and NOT CSRF-guarded: clearing a session is not harmful and we
-// must never lock a user out of logging out. Returns the CAS logout URL when
-// CAS is configured so the UI can optionally redirect for single-logout.
-router.post('/auth/logout', (req, res) => {
+// POST /api/admin/auth/logout - Revoke the presented session token server-side
+// and clear the session cookies. Not behind authMiddleware and NOT CSRF-guarded:
+// ending a session is not harmful and we must never lock a user out of logging
+// out. Returns the CAS logout URL when CAS is configured so the UI can
+// optionally redirect for single-logout.
+router.post('/auth/logout', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token =
+    (req.cookies?.[SESSION_COOKIE] as string | undefined) ||
+    (authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined);
+  try {
+    await revokeSessionToken(token);
+  } catch (err) {
+    console.error('Session revocation error on logout:', err);
+  }
   clearSession(res);
   res.json({
     ok: true,
@@ -146,7 +158,7 @@ router.get('/auth/status', authMiddleware, requireCsrf, (req: AuthRequest, res) 
 // POST /api/admin/login - Admin login (legacy email/password)
 router.post('/login', [
   body('email').isEmail().withMessage('Valid email required'),
-  body('password').notEmpty().withMessage('Password required'),
+  body('password').isString().notEmpty().withMessage('Password required'),
 ], async (req: Request, res: Response) => {
   try {
     const errors = validationResult(req);
@@ -161,22 +173,15 @@ router.post('/login', [
       [email]
     );
 
-    if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
+    // Always run exactly one bcrypt comparison (see DUMMY_PASSWORD_HASH).
     const user = result.rows[0];
-
-    const validPassword = await bcrypt.compare(password, user.hashed_password);
-    if (!validPassword) {
+    const storedHash: string | null = user?.hashed_password || null;
+    const validPassword = await bcrypt.compare(password, storedHash || DUMMY_PASSWORD_HASH);
+    if (!user || !storedHash || !validPassword) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
-      JWT_SECRET,
-      { expiresIn: JWT_EXPIRES_IN }
-    );
+    const token = signSession(user);
 
     // Update last login
     await pool.query(
@@ -185,8 +190,10 @@ router.post('/login', [
     );
 
     // Set the JWT as an HttpOnly cookie (+ CSRF cookie). The token is NEVER
-    // returned in the body.
+    // returned in the body. The device cookie exempts this browser from the
+    // per-account lockout (lib/loginThrottle.ts).
     issueSession(res, token);
+    setDeviceCookie(res, user.email);
 
     res.json({
       user: {

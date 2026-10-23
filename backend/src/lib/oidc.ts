@@ -7,9 +7,14 @@ import pool from '../db/connection';
 // at call time (not import time) so an unconfigured deploy never crashes.
 //
 // Like CAS, OIDC only *authenticates*. Authorization is unchanged: the callback
-// route requires the email to already exist in the users table, else the same
+// route requires the account to already exist in the users table, else the same
 // "not authorized" path is taken. This module never touches the users table and
 // never auto-creates accounts.
+//
+// The e-mail used to find that account must be one the IdP vouches for: by
+// default the `email` claim, accepted only with `email_verified: true`. IdPs
+// that don't send email_verified but whose usernames are admin-controlled (e.g.
+// Entra ID's UPN) can opt in via OIDC_EMAIL_CLAIM / OIDC_REQUIRE_EMAIL_VERIFIED.
 
 function getIssuerUrl(): string | undefined {
   return process.env.OIDC_ISSUER || undefined;
@@ -31,6 +36,46 @@ export function getRedirectUri(): string {
 
 function getScopes(): string {
   return process.env.OIDC_SCOPES || 'openid email profile';
+}
+
+export interface OidcIdentity {
+  email: string;
+  name: string;
+  issuer: string;
+  subject: string;
+}
+
+/**
+ * Pick the account e-mail out of validated id_token claims. Throws when the
+ * claim is missing, or when it is the `email` claim and the IdP has not marked
+ * it verified (unless OIDC_REQUIRE_EMAIL_VERIFIED=false). A different claim
+ * (OIDC_EMAIL_CLAIM, e.g. preferred_username) is used only when the operator
+ * names it explicitly.
+ */
+export function resolveOidcIdentity(
+  claims: Record<string, unknown>,
+  env: NodeJS.ProcessEnv = process.env
+): OidcIdentity {
+  const claimName = env.OIDC_EMAIL_CLAIM || 'email';
+  const requireVerified = env.OIDC_REQUIRE_EMAIL_VERIFIED !== 'false';
+
+  const issuer = claims.iss;
+  const subject = claims.sub;
+  if (typeof issuer !== 'string' || !issuer || typeof subject !== 'string' || !subject) {
+    throw new Error('OIDC id_token is missing iss or sub');
+  }
+
+  const email = claims[claimName];
+  if (typeof email !== 'string' || !email.includes('@')) {
+    throw new Error(`OIDC id_token did not contain an e-mail in the "${claimName}" claim`);
+  }
+
+  if (claimName === 'email' && requireVerified && claims.email_verified !== true) {
+    throw new Error('OIDC id_token e-mail is not verified (email_verified is not true)');
+  }
+
+  const name = typeof claims.name === 'string' && claims.name ? claims.name : email;
+  return { email, name, issuer, subject };
 }
 
 export function isOidcConfigured(): boolean {
@@ -96,13 +141,13 @@ export async function getAuthUrl(): Promise<{ url: string } & OidcFlowState> {
  * Validate the callback. client.callback verifies the id_token signature,
  * issuer, audience, expiry, and the supplied nonce/state, and (with PKCE)
  * checks the code_verifier. Throws on any validation failure — callers must
- * treat a throw as an authentication failure. Returns the verified email/name
- * claims; email is required (falls back to preferred_username).
+ * treat a throw as an authentication failure. Returns the identity from
+ * resolveOidcIdentity (verified e-mail plus the stable iss/sub pair).
  */
 export async function handleCallback(
   params: Record<string, string>,
   flow: OidcFlowState
-): Promise<{ email: string; name: string }> {
+): Promise<OidcIdentity> {
   const client = await getClient();
 
   const tokenSet = await client.callback(getRedirectUri(), params, {
@@ -111,14 +156,7 @@ export async function handleCallback(
     code_verifier: flow.codeVerifier,
   });
 
-  const claims = tokenSet.claims();
-  const email = (claims.email as string | undefined) || (claims.preferred_username as string | undefined);
-  if (!email) {
-    throw new Error('OIDC id_token did not contain an email or preferred_username claim');
-  }
-
-  const name = (claims.name as string | undefined) || email;
-  return { email, name };
+  return resolveOidcIdentity(tokenSet.claims());
 }
 
 // --- Transient flow-state persistence (oidc_flows table) --------------------
