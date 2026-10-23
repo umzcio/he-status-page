@@ -9,11 +9,13 @@ export async function queueNotifications(
   newStatus: string
 ): Promise<void> {
   try {
-    // Find verified, active subscribers who are subscribed to this service
+    // Find verified, active subscribers who are subscribed to this service.
+    // Hidden services never email the public, even for older enrolments.
     const subscribers = await pool.query(`
       SELECT s.id AS subscription_id, s.email, s.verification_token
       FROM subscriptions s
       JOIN subscription_services ss ON s.id = ss.subscription_id
+      JOIN services svc ON svc.id = ss.service_id AND svc.visible IS NOT false
       WHERE ss.service_id = $1
         AND s.verified = true
         AND s.unsubscribed_at IS NULL

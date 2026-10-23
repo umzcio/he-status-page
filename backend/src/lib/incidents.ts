@@ -96,7 +96,9 @@ export async function autoCreateIncident(
       service_id, title, description, severity, impact, status,
       source, auto_created, started_at, visible
     )
-    VALUES ($1, $2, $3, $4, $4, 'investigating', 'automated', true, NOW(), true)
+    SELECT $1, $2, $3, $4, $4, 'investigating', 'automated', true, NOW(),
+           -- A hidden service's incidents are hidden too.
+           COALESCE((SELECT visible FROM services WHERE id = $1), true)
     RETURNING id`,
     [serviceId, title, message, impact]
   );

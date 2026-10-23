@@ -43,14 +43,18 @@ async function processQueue(): Promise<void> {
 
     for (const notification of result.rows) {
       try {
-        // Get subscriber email
+        // Get subscriber email. Rows queued before their service was hidden
+        // are dropped too: hidden services never email the public.
         const sub = await pool.query(
-          'SELECT email FROM subscriptions WHERE id = $1 AND verified = true AND unsubscribed_at IS NULL',
-          [notification.subscription_id]
+          `SELECT email FROM subscriptions
+            WHERE id = $1 AND verified = true AND unsubscribed_at IS NULL
+              AND ($2::uuid IS NULL
+                   OR EXISTS (SELECT 1 FROM services WHERE id = $2 AND visible IS NOT false))`,
+          [notification.subscription_id, notification.service_id]
         );
 
         if (sub.rows.length === 0) {
-          // Subscriber gone — mark as sent to remove from queue
+          // Subscriber gone or service hidden — mark as sent to remove from queue
           await pool.query('UPDATE notification_queue SET sent_at = NOW() WHERE id = $1', [notification.id]);
           continue;
         }

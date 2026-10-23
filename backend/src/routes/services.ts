@@ -5,6 +5,19 @@ import pool from '../db/connection';
 
 const router = Router();
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Hidden services (visible = false) are admin-only: every public per-service
+// route answers 404 for them, exactly as for an unknown id.
+async function isPublicService(id: string): Promise<boolean> {
+  if (!UUID_RE.test(id)) return false;
+  const result = await pool.query(
+    'SELECT 1 FROM services WHERE id = $1 AND visible IS NOT false',
+    [id]
+  );
+  return result.rows.length > 0;
+}
+
 // GET /api/services - Get all services with current status (single consolidated query)
 router.get('/', async (req, res) => {
   try {
@@ -138,18 +151,30 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    if (!UUID_RE.test(id)) {
+      return res.status(404).json({ error: 'Service not found' });
+    }
 
+    // Public display fields only (the same ones the list route returns) —
+    // never the poller's monitoring config (endpoint, type, interval, ...).
     const result = await pool.query(`
       SELECT
-        s.*,
+        s.id,
+        s.name,
+        s.description,
+        COALESCE(c.slug, s.category) AS category,
+        s.provider,
+        s.external_link,
+        s.display_order,
         ss.status,
         ss.status_source,
         ss.status_message,
         ss.last_checked_at,
         ss.override_active
       FROM services s
+      LEFT JOIN categories c ON s.category_id = c.id
       LEFT JOIN service_status ss ON s.id = ss.service_id
-      WHERE s.id = $1
+      WHERE s.id = $1 AND s.visible IS NOT false
     `, [id]);
 
     if (result.rows.length === 0) {
@@ -176,6 +201,10 @@ router.get('/:id/uptime', [
 
     const { id } = req.params;
     const days = (req.query.days as unknown as number) || 90;
+
+    if (!(await isPublicService(id))) {
+      return res.status(404).json({ error: 'Service not found' });
+    }
 
     // For each day in the window, compute the worst (most severe) status.
     // Severity ranking: outage > degraded > maintenance > unknown > operational.
@@ -303,6 +332,10 @@ router.get('/:id/history', [
     const { id } = req.params;
     const limit = (req.query.limit as unknown as number) || 50;
     const offset = (req.query.offset as unknown as number) || 0;
+
+    if (!(await isPublicService(id))) {
+      return res.status(404).json({ error: 'Service not found' });
+    }
 
     const result = await pool.query(`
       SELECT

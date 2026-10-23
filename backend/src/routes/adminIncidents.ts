@@ -135,9 +135,16 @@ router.post('/', authMiddleware, requireCsrf, requireRole(...MUTATE_ROLES), [
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
 
     const { service_id, title, description, impact, status = 'investigating',
-            initial_message, visible = true, started_at } = req.body;
+            initial_message, visible, started_at } = req.body;
 
     await client.query('BEGIN');
+
+    // Unless told otherwise, an incident is as public as its service.
+    let isVisible: boolean = visible;
+    if (isVisible === undefined) {
+      const svc = await client.query('SELECT visible FROM services WHERE id = $1', [service_id]);
+      isVisible = svc.rows[0]?.visible !== false;
+    }
 
     const incidentResult = await client.query(`
       INSERT INTO incidents (
@@ -147,7 +154,7 @@ router.post('/', authMiddleware, requireCsrf, requireRole(...MUTATE_ROLES), [
       VALUES ($1, $2, $3, $4, $4, $5, 'manual', false, $6, $7, $8)
       RETURNING id
     `, [service_id, title, description || null, impact, status, req.user!.id,
-        started_at || new Date(), visible]);
+        started_at || new Date(), isVisible]);
 
     const incidentId = incidentResult.rows[0].id;
 

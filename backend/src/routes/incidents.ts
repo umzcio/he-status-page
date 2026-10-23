@@ -24,6 +24,8 @@ router.get('/', [
     const limit = (req.query.limit as unknown as number) || 30;
     const offset = (req.query.offset as unknown as number) || 0;
 
+    // Public = the incident is visible AND its service is (hidden services'
+    // incidents stay admin-only). The JOIN on services enforces the latter.
     let whereClause = 'WHERE i.visible = true';
     if (status === 'active') whereClause += ' AND i.resolved_at IS NULL';
     if (status === 'resolved') whereClause += ' AND i.resolved_at IS NOT NULL';
@@ -54,7 +56,7 @@ router.get('/', [
           WHERE iu.incident_id = i.id
         ) AS updates
       FROM incidents i
-      LEFT JOIN services s ON i.service_id = s.id
+      JOIN services s ON i.service_id = s.id AND s.visible IS NOT false
       ${whereClause}
       ORDER BY i.started_at DESC
       LIMIT $1 OFFSET $2
@@ -62,7 +64,10 @@ router.get('/', [
 
     // True total across all pages (same WHERE, no LIMIT/OFFSET).
     const countResult = await pool.query(
-      `SELECT COUNT(*)::int AS total FROM incidents i ${whereClause}`
+      `SELECT COUNT(*)::int AS total
+         FROM incidents i
+         JOIN services s ON i.service_id = s.id AND s.visible IS NOT false
+       ${whereClause}`
     );
 
     res.json({
@@ -112,7 +117,7 @@ router.get('/:id', [
           WHERE iu.incident_id = i.id
         ) AS updates
       FROM incidents i
-      LEFT JOIN services s ON i.service_id = s.id
+      JOIN services s ON i.service_id = s.id AND s.visible IS NOT false
       WHERE i.id = $1 AND i.visible = true
     `, [id]);
 

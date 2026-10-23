@@ -1,4 +1,5 @@
 import { STATUS_COLORS, STATUS_LABELS } from './constants';
+import { escapeHtml } from './html';
 
 const PUBLIC_URL = () => process.env.PUBLIC_URL || 'http://localhost:3001';
 const SITE_NAME = () => process.env.SITE_NAME || 'IT Status';
@@ -60,7 +61,7 @@ export function statusChangeEmail(
     html: layout(`
       <h2 style="margin:0 0 16px;font-size:20px;color:#111827;">Service Status Change</h2>
       <p style="color:#374151;line-height:1.6;">
-        <strong>${serviceName}</strong> status has changed:
+        <strong>${escapeHtml(serviceName)}</strong> status has changed:
       </p>
       <div style="display:flex;align-items:center;gap:8px;margin:16px 0;padding:12px;background:#f9fafb;border-radius:6px;">
         <span style="color:${STATUS_COLORS[oldStatus as keyof typeof STATUS_COLORS] || '#9ca3af'};font-weight:bold;">${STATUS_LABELS[oldStatus as keyof typeof STATUS_LABELS] || oldStatus}</span>

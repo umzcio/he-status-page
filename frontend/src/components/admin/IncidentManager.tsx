@@ -226,7 +226,15 @@ function CreateIncidentDialog({ services, onClose, onCreated }: {
         <form onSubmit={submit} className={styles.form}>
           <label>
             Service
-            <select value={serviceId} onChange={e => setServiceId(e.target.value)} required>
+            <select
+              value={serviceId}
+              onChange={e => {
+                setServiceId(e.target.value);
+                // Default to the service's own visibility: hidden services get hidden incidents.
+                setVisible(services.find(s => s.id === e.target.value)?.visible !== false);
+              }}
+              required
+            >
               <option value="">— select —</option>
               {services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
