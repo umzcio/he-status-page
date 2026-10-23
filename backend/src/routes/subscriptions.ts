@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import axios from 'axios';
 import { sendEmail, isEmailConfigured } from '../lib/email';
 import { verificationEmail } from '../lib/emailTemplates';
+import { escapeHtml } from '@he-status/shared';
 
 const router = Router();
 
@@ -31,10 +32,48 @@ async function verifyTurnstile(token: string, remoteip?: string): Promise<boolea
   return response.data.success === true;
 }
 
+// Every accepted subscribe request gets this same response, whatever state the
+// address was already in, so the endpoint can't be used to learn who is
+// subscribed. What actually happened is only visible in the mailbox.
+const SUBSCRIBE_RESPONSE = {
+  success: true,
+  message: 'Thanks! If this address can receive notifications, a confirmation email is on its way.',
+};
+
+// Send the verification mail without making the response wait for SMTP, so
+// response timing doesn't reveal which branch ran either.
+function sendVerification(email: string, token: string): void {
+  if (!isEmailConfigured()) return;
+  const template = verificationEmail(token);
+  sendEmail({ to: email, subject: template.subject, html: template.html }).catch((err) =>
+    console.error('Failed to send verification email:', err)
+  );
+}
+
+// The publicly visible services among `requested` (all of them if empty).
+// Hidden services can never be subscribed to from the public form.
+async function visibleServiceIds(requested: string[]): Promise<string[]> {
+  const result = requested.length > 0
+    ? await pool.query('SELECT id FROM services WHERE visible IS NOT false AND id = ANY($1::uuid[])', [requested])
+    : await pool.query('SELECT id FROM services WHERE visible IS NOT false');
+  return result.rows.map((r: any) => r.id);
+}
+
+async function setSubscriptionServices(subscriptionId: string, serviceIds: string[]): Promise<void> {
+  await pool.query('DELETE FROM subscription_services WHERE subscription_id = $1', [subscriptionId]);
+  for (const serviceId of serviceIds) {
+    await pool.query(
+      'INSERT INTO subscription_services (subscription_id, service_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [subscriptionId, serviceId]
+    );
+  }
+}
+
 // POST /api/subscriptions - Create new subscription
 router.post('/', [
   body('email').isEmail().withMessage('Valid email required').normalizeEmail(),
-  body('service_ids').optional().isArray(),
+  body('service_ids').optional().isArray({ max: 500 }),
+  body('service_ids.*').isUUID().withMessage('Invalid service id'),
   body('turnstileToken').optional().isString(),
 ], async (req: Request, res: Response) => {
   try {
@@ -67,6 +106,8 @@ router.post('/', [
       }
     }
 
+    const serviceIds = await visibleServiceIds(service_ids as string[]);
+
     // Check for existing subscription with same email
     const existing = await pool.query(
       'SELECT id, verified, unsubscribed_at, verification_token FROM subscriptions WHERE email = $1',
@@ -77,74 +118,24 @@ router.post('/', [
       const sub = existing.rows[0];
 
       if (sub.unsubscribed_at) {
-        // Previously unsubscribed — reactivate
+        // Previously unsubscribed — reactivate pending re-verification.
         const newToken = crypto.randomBytes(32).toString('hex');
         await pool.query(
           `UPDATE subscriptions SET unsubscribed_at = NULL, verified = false, verification_token = $1 WHERE id = $2`,
           [newToken, sub.id]
         );
-
-        // Re-add service subscriptions
-        await pool.query('DELETE FROM subscription_services WHERE subscription_id = $1', [sub.id]);
-        let serviceIds = service_ids as string[];
-        if (serviceIds.length === 0) {
-          const allServices = await pool.query('SELECT id FROM services');
-          serviceIds = allServices.rows.map((r: any) => r.id);
-        }
-        for (const serviceId of serviceIds) {
-          await pool.query(
-            'INSERT INTO subscription_services (subscription_id, service_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-            [sub.id, serviceId]
-          );
-        }
-
-        if (isEmailConfigured()) {
-          try {
-            const template = verificationEmail(newToken);
-            await sendEmail({ to: email, subject: template.subject, html: template.html });
-          } catch (err) {
-            console.error('Failed to send verification email:', err);
-          }
-        }
-
-        return res.json({
-          success: true,
-          message: 'Subscription reactivated. Please check your email to verify.',
-        });
+        await setSubscriptionServices(sub.id, serviceIds);
+        sendVerification(email, newToken);
+      } else if (!sub.verified) {
+        // Active but unverified — resend verification.
+        sendVerification(email, sub.verification_token);
       }
+      // Already active and verified: nothing to do.
 
-      if (sub.verified) {
-        // Already active and verified
-        return res.json({
-          success: true,
-          message: "You're already subscribed to status notifications.",
-        });
-      }
-
-      // Active but unverified — resend verification
-      if (isEmailConfigured()) {
-        try {
-          const template = verificationEmail(sub.verification_token);
-          await sendEmail({ to: email, subject: template.subject, html: template.html });
-        } catch (err) {
-          console.error('Failed to resend verification email:', err);
-        }
-      }
-
-      return res.json({
-        success: true,
-        message: 'Verification email resent. Please check your email.',
-      });
+      return res.json(SUBSCRIBE_RESPONSE);
     }
 
     // New subscription
-    // Resolve service IDs — subscribe to all if none specified
-    let serviceIds = service_ids as string[];
-    if (serviceIds.length === 0) {
-      const allServices = await pool.query('SELECT id FROM services');
-      serviceIds = allServices.rows.map((r: any) => r.id);
-    }
-
     const token = crypto.randomBytes(32).toString('hex');
 
     const result = await pool.query(`
@@ -153,31 +144,10 @@ router.post('/', [
       RETURNING id
     `, [email, token]);
 
-    const subscriptionId = result.rows[0].id;
+    await setSubscriptionServices(result.rows[0].id, serviceIds);
+    sendVerification(email, token);
 
-    // Add service subscriptions
-    for (const serviceId of serviceIds) {
-      await pool.query(`
-        INSERT INTO subscription_services (subscription_id, service_id)
-        VALUES ($1, $2)
-        ON CONFLICT DO NOTHING
-      `, [subscriptionId, serviceId]);
-    }
-
-    // Send verification email if configured
-    if (isEmailConfigured()) {
-      try {
-        const template = verificationEmail(token);
-        await sendEmail({ to: email, subject: template.subject, html: template.html });
-      } catch (err) {
-        console.error('Failed to send verification email:', err);
-      }
-    }
-
-    res.json({
-      success: true,
-      message: 'Subscription created. Please check your email to verify.',
-    });
+    res.json(SUBSCRIBE_RESPONSE);
 
   } catch (error) {
     console.error('Subscription error:', error);
@@ -210,8 +180,8 @@ router.get('/verify/:token', async (req, res) => {
     res.send(`
       <html><body style="font-family:Arial;text-align:center;padding:60px;">
         <h2 style="color:#22c55e;">Subscription Verified!</h2>
-        <p>You'll now receive status change notifications at <strong>${result.rows[0].email}</strong>.</p>
-        <p><a href="${publicUrl}">Return to Status Page</a></p>
+        <p>You'll now receive status change notifications at <strong>${escapeHtml(result.rows[0].email)}</strong>.</p>
+        <p><a href="${escapeHtml(publicUrl)}">Return to Status Page</a></p>
       </body></html>
     `);
   } catch (error) {
@@ -246,7 +216,7 @@ router.get('/unsubscribe/:token', async (req, res) => {
       <html><body style="font-family:Arial;text-align:center;padding:60px;">
         <h2>Unsubscribed</h2>
         <p>You've been unsubscribed from status notifications.</p>
-        <p><a href="${publicUrl}">Return to Status Page</a></p>
+        <p><a href="${escapeHtml(publicUrl)}">Return to Status Page</a></p>
       </body></html>
     `);
   } catch (error) {

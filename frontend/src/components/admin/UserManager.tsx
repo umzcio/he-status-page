@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../../lib/auth';
-import { AdminUser, getUsers, createUser, updateUser, deleteUser, resetUserPassword } from '../../lib/adminApi';
+import { AdminUser, getUsers, createUser, updateUser, deleteUser, resetUserPassword, revokeUserSessions } from '../../lib/adminApi';
 import UserForm, { UserFormData } from './UserForm';
 import ConfirmDialog from '../ConfirmDialog';
 import styles from './UserManager.module.css';
@@ -27,6 +27,7 @@ export default function UserManager() {
   const [formMode, setFormMode] = useState<'create' | 'edit' | 'password'>('create');
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<AdminUser | null>(null);
 
   const fetchUsers = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -77,6 +78,12 @@ export default function UserManager() {
     await deleteUser(deleteTarget.id);
     setDeleteTarget(null);
     await fetchUsers();
+  };
+
+  const handleRevokeSessions = async () => {
+    if (!isAuthenticated || !revokeTarget) return;
+    await revokeUserSessions(revokeTarget.id);
+    setRevokeTarget(null);
   };
 
   const openEdit = (user: AdminUser) => {
@@ -131,6 +138,9 @@ export default function UserManager() {
                   <button className={styles.editBtn} onClick={() => openEdit(u)} aria-label={`Edit ${u.email}`}>Edit</button>
                   <button className={styles.resetBtn} onClick={() => openResetPassword(u)} aria-label={`Reset password for ${u.email}`}>Password</button>
                   {u.id !== currentUser?.id && (
+                    <button className={styles.resetBtn} onClick={() => setRevokeTarget(u)} aria-label={`Sign out ${u.email} everywhere`}>Sign out</button>
+                  )}
+                  {u.id !== currentUser?.id && (
                     <button className={styles.deleteBtn} onClick={() => setDeleteTarget(u)} aria-label={`Delete ${u.email}`}>Delete</button>
                   )}
                 </td>
@@ -155,6 +165,15 @@ export default function UserManager() {
           message={`Are you sure you want to delete "${deleteTarget.email}"?`}
           onConfirm={handleDelete}
           onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {revokeTarget && (
+        <ConfirmDialog
+          title="Sign Out Everywhere"
+          message={`End every active session for "${revokeTarget.email}"? They will need to sign in again.`}
+          onConfirm={handleRevokeSessions}
+          onCancel={() => setRevokeTarget(null)}
         />
       )}
     </div>

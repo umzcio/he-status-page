@@ -1,18 +1,38 @@
+import dns from 'dns';
 import { lookup } from 'dns/promises';
 import net from 'net';
+import axios, { AxiosInstance } from 'axios';
 
 /**
- * SSRF guard for admin-configurable status endpoints.
+ * SSRF guard for admin-configurable outbound URLs (status endpoints, Teams
+ * webhooks).
  *
- * `status_api_endpoint` values are configurable by super admins, so a malicious or
- * compromised admin could otherwise point the poller at internal hosts or cloud
- * metadata services and read the responses back out of `poller_logs`. This module
- * resolves the endpoint's hostname and classifies every resulting address, rejecting
- * anything that isn't a legitimate public monitoring target.
+ * These URLs are configurable by super admins, so a malicious or compromised
+ * admin could otherwise point the poller or backend at internal hosts or cloud
+ * metadata services and read the responses back. Every address a request would
+ * connect to is classified, and anything that isn't a legitimate target is
+ * rejected.
  *
- * Only http:/https: endpoints are inspected. Non-URL endpoints used by internal
- * adapters (e.g. LibreNMS "device:123" / "group:5") pass through untouched.
+ * Two layers:
+ *  - assertEndpointAllowed(): an up-front check (resolve + classify), used when
+ *    a URL is saved and before a poll so misconfigurations fail early.
+ *  - createGuardedHttpClient(): an axios instance that enforces the same policy
+ *    inside the connection path — on the exact addresses the socket connects
+ *    to (so DNS rebinding between check and fetch doesn't help) and on every
+ *    redirect hop.
+ *
+ * Only http:/https: endpoints are inspected by assertEndpointAllowed. Non-URL
+ * endpoints used by internal adapters (e.g. LibreNMS "device:123" / "group:5")
+ * pass through untouched.
  */
+
+export interface GuardPolicy {
+  /**
+   * Allow loopback/private/link-local targets (cloud metadata stays blocked).
+   * Defaults to POLLER_ALLOW_PRIVATE_ENDPOINTS=true.
+   */
+  allowPrivate?: boolean;
+}
 
 type AddressCategory =
   | 'public'
@@ -168,12 +188,12 @@ const METADATA_KEYS = new Set(
 
 // --- Evaluation -------------------------------------------------------------
 
-function allowPrivateEndpoints(): boolean {
-  return process.env.POLLER_ALLOW_PRIVATE_ENDPOINTS === 'true';
+function allowPrivateEndpoints(policy: GuardPolicy): boolean {
+  return policy.allowPrivate ?? process.env.POLLER_ALLOW_PRIVATE_ENDPOINTS === 'true';
 }
 
 /** Returns a blocking reason string, or null if the address is allowed. */
-function evaluateAddress(address: string): string | null {
+export function evaluateAddress(address: string, policy: GuardPolicy = {}): string | null {
   const parsed = ipToBytes(address);
   if (!parsed) return `unparseable address "${address}"`;
 
@@ -193,7 +213,7 @@ function evaluateAddress(address: string): string | null {
     case 'private':
     case 'linklocal':
       // Campuses may legitimately monitor internal services when opted in.
-      return allowPrivateEndpoints() ? null : `${category} address ${address}`;
+      return allowPrivateEndpoints(policy) ? null : `${category} address ${address}`;
     default:
       // unspecified, broadcast, multicast, reserved — never a valid target.
       return `${category} address ${address}`;
@@ -204,7 +224,7 @@ function evaluateAddress(address: string): string | null {
  * Throws a descriptive error if the endpoint resolves to a disallowed address.
  * Passes silently for allowed public endpoints and for non-http(s) endpoints.
  */
-export async function assertEndpointAllowed(endpoint: string): Promise<void> {
+export async function assertEndpointAllowed(endpoint: string, policy: GuardPolicy = {}): Promise<void> {
   let url: URL;
   try {
     url = new URL(endpoint);
@@ -244,9 +264,93 @@ export async function assertEndpointAllowed(endpoint: string): Promise<void> {
   }
 
   for (const address of addresses) {
-    const reason = evaluateAddress(address);
+    const reason = evaluateAddress(address, policy);
     if (reason) {
       throw new Error(`Endpoint blocked by SSRF guard: ${reason} (host "${host}")`);
     }
   }
+}
+
+// --- Connection-path enforcement ---------------------------------------------
+
+function stripBrackets(host: string): string {
+  return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+}
+
+/**
+ * Synchronous check of a request target: http(s) only, and a literal-IP host
+ * must pass the policy. (Node never calls `lookup` for literal IPs, so this is
+ * the only place those are caught.) Hostnames are checked by the guarded
+ * lookup when the socket connects.
+ */
+export function assertTargetAllowed(protocol: string, hostname: string, policy: GuardPolicy = {}): void {
+  if (protocol !== 'http:' && protocol !== 'https:') {
+    throw new Error(`Endpoint blocked by SSRF guard: unsupported protocol "${protocol}"`);
+  }
+  const host = stripBrackets(hostname);
+  if (net.isIP(host) !== 0) {
+    const reason = evaluateAddress(host, policy);
+    if (reason) throw new Error(`Endpoint blocked by SSRF guard: ${reason}`);
+  }
+}
+
+type ResolveCallback = (err: NodeJS.ErrnoException | null, addresses: dns.LookupAddress[]) => void;
+type Resolver = (hostname: string, callback: ResolveCallback) => void;
+type LookupCallback = (err: Error | null, addresses: Array<{ address: string; family: 4 | 6 }>) => void;
+
+const systemResolver: Resolver = (hostname, callback) =>
+  dns.lookup(hostname, { all: true }, callback);
+
+/**
+ * A `lookup` for HTTP requests that resolves once, rejects the connection if
+ * ANY resolved address is disallowed, and hands the socket exactly the
+ * addresses it vetted.
+ */
+export function createGuardedLookup(policy: GuardPolicy = {}, resolve: Resolver = systemResolver) {
+  return (hostname: string, _options: object, callback: LookupCallback): void => {
+    resolve(hostname, (err, addresses) => {
+      if (err) return callback(err, []);
+      if (!addresses || addresses.length === 0) {
+        return callback(new Error(`Endpoint blocked by SSRF guard: host "${hostname}" resolved to no addresses`), []);
+      }
+      for (const { address } of addresses) {
+        const reason = evaluateAddress(address, policy);
+        if (reason) {
+          return callback(new Error(`Endpoint blocked by SSRF guard: ${reason} (host "${hostname}")`), []);
+        }
+      }
+      callback(null, addresses.map(({ address, family }) => ({ address, family: family === 6 ? 6 : 4 })));
+    });
+  };
+}
+
+export interface GuardedClientOptions extends GuardPolicy {
+  /** Redirect hops to follow (each one re-checked). Default 5. */
+  maxRedirects?: number;
+  /** Largest response body accepted, in bytes; bigger bodies fail the request. Default 2 MB. */
+  maxContentLength?: number;
+  /** DNS resolver override, for tests. */
+  resolve?: Resolver;
+}
+
+/**
+ * An axios instance whose every connection — first request, retries and each
+ * redirect hop — goes only to addresses that pass the guard policy.
+ */
+export function createGuardedHttpClient(options: GuardedClientOptions = {}): AxiosInstance {
+  const policy: GuardPolicy = { allowPrivate: options.allowPrivate };
+  const client = axios.create({
+    maxRedirects: options.maxRedirects ?? 5,
+    maxContentLength: options.maxContentLength ?? 2 * 1024 * 1024,
+    lookup: createGuardedLookup(policy, options.resolve),
+    beforeRedirect: (redirect: Record<string, any>) => {
+      assertTargetAllowed(redirect.protocol, redirect.hostname, policy);
+    },
+  });
+  client.interceptors.request.use((config) => {
+    const url = new URL(client.getUri(config));
+    assertTargetAllowed(url.protocol, url.hostname, policy);
+    return config;
+  });
+  return client;
 }

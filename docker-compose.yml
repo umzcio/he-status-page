@@ -51,6 +51,11 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-hestatus}:${POSTGRES_PASSWORD}@hestatus-db:5432/${POSTGRES_DB:-hestatus}
+      # Listen on the container network. The port is not published, so only a
+      # reverse proxy attached to hestatus-network can reach it; trust X-Forwarded-For
+      # from private (container) addresses only.
+      HOST: 0.0.0.0
+      TRUST_PROXY: ${TRUST_PROXY:-loopback,uniquelocal}
     depends_on:
       hestatus-db:
         condition: service_healthy

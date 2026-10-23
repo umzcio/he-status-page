@@ -86,6 +86,23 @@ export async function updateLastChecked(serviceId: string): Promise<void> {
   );
 }
 
+// Cap on the provider data stored per check. Larger results are replaced by a
+// marker with the original size and a short preview.
+export const MAX_RAW_RESPONSE_CHARS = 64 * 1024;
+const RAW_RESPONSE_PREVIEW_CHARS = 2048;
+
+export function boundedRawResponse(data: unknown): string | null {
+  if (data === undefined || data === null) return null;
+  const json = JSON.stringify(data);
+  if (json === undefined) return null;
+  if (json.length <= MAX_RAW_RESPONSE_CHARS) return json;
+  return JSON.stringify({
+    truncated: true,
+    original_length: json.length,
+    preview: json.slice(0, RAW_RESPONSE_PREVIEW_CHARS),
+  });
+}
+
 export async function logPollerCheck(data: {
   service_id: string;
   check_started_at: Date;
@@ -108,7 +125,7 @@ export async function logPollerCheck(data: {
     data.check_completed_at,
     data.success,
     data.status_detected,
-    data.raw_response ? JSON.stringify(data.raw_response) : null,
+    boundedRawResponse(data.raw_response),
     data.error_message,
     data.response_time_ms
   ]);

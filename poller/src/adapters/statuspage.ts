@@ -1,4 +1,5 @@
-import axios from 'axios';
+import { cleanStatusText } from '@he-status/shared';
+import { endpointHttp } from '../lib/endpointHttp';
 
 /**
  * Adapter for Statuspage.io format
@@ -14,7 +15,7 @@ interface StatusPageResponse {
 
 export async function fetchStatus(endpoint: string): Promise<StatusPageResponse> {
   try {
-    const response = await axios.get(endpoint, {
+    const response = await endpointHttp.get(endpoint, {
       timeout: 10000,
       headers: {
         'User-Agent': 'HE-Status-Poller/1.0'
@@ -22,7 +23,7 @@ export async function fetchStatus(endpoint: string): Promise<StatusPageResponse>
     });
     return response.data;
   } catch (error: any) {
-    throw new Error(`Failed to fetch status from ${endpoint}: ${error.message}`);
+    throw new Error(`Failed to fetch status: ${error.message}`, { cause: error });
   }
 }
 
@@ -39,6 +40,6 @@ export function normalizeStatus(data: StatusPageResponse): { status: string; mes
 
   return {
     status: statusMap[indicator] || 'unknown',
-    message: data.status?.description || 'Status unknown'
+    message: cleanStatusText(data.status?.description) || 'Status unknown'
   };
 }

@@ -4,6 +4,8 @@ import bcrypt from 'bcrypt';
 import { authMiddleware, requireRole, AuthRequest } from './middleware/auth';
 import { requireCsrf } from './middleware/csrf';
 import { logAdminAction } from '../lib/adminLog';
+import { issueSession } from '../lib/authCookies';
+import { signSession } from '../lib/session';
 
 const router = Router();
 
@@ -134,7 +136,8 @@ router.delete('/:id', authMiddleware, requireCsrf, requireRole('super_admin'), a
   }
 });
 
-// POST /api/admin/users/:id/reset-password - Set new password
+// POST /api/admin/users/:id/reset-password - Set new password. Bumping
+// token_version ends every existing session for the account (lib/session.ts).
 router.post('/:id/reset-password', authMiddleware, requireCsrf, requireRole('super_admin'), async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
@@ -147,7 +150,9 @@ router.post('/:id/reset-password', authMiddleware, requireCsrf, requireRole('sup
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const result = await pool.query(
-      'UPDATE users SET hashed_password = $1 WHERE id = $2 RETURNING id',
+      `UPDATE users SET hashed_password = $1, token_version = token_version + 1
+       WHERE id = $2
+       RETURNING id, email, role, token_version`,
       [hashedPassword, id]
     );
 
@@ -157,10 +162,39 @@ router.post('/:id/reset-password', authMiddleware, requireCsrf, requireRole('sup
 
     await logAdminAction(req.user!.id, 'user_password_reset', { targetUserId: id });
 
+    // Resetting your own password should not log out the browser doing it.
+    if (id === req.user!.id && req.authVia === 'cookie') {
+      issueSession(res, signSession(result.rows[0]));
+    }
+
     res.json({ success: true });
   } catch (error) {
     console.error('Error resetting password:', error);
     res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
+// POST /api/admin/users/:id/revoke-sessions - End every session for a user
+// (e.g. a lost laptop or suspected cookie theft) without changing the password.
+router.post('/:id/revoke-sessions', authMiddleware, requireCsrf, requireRole('super_admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      'UPDATE users SET token_version = token_version + 1 WHERE id = $1 RETURNING id',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    await logAdminAction(req.user!.id, 'user_sessions_revoked', { targetUserId: id });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error revoking sessions:', error);
+    res.status(500).json({ error: 'Failed to revoke sessions' });
   }
 });
 

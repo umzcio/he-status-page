@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { endpointHttp, MAX_VENDOR_FEED_BYTES } from '../lib/endpointHttp';
 
 /**
  * Adapter for AWS Service Health Dashboard
@@ -13,6 +14,7 @@ export async function fetchStatus(endpoint: string): Promise<any> {
     // Fetch the AWS global health status page data
     const response = await axios.get(AWS_STATUS_URL, {
       timeout: 10000,
+      maxContentLength: MAX_VENDOR_FEED_BYTES,
       headers: {
         'User-Agent': 'HE-Status-Poller/1.0',
         'Accept': 'application/json',
@@ -28,7 +30,7 @@ export async function fetchStatus(endpoint: string): Promise<any> {
     // Fallback: if a specific endpoint was given, probe it directly
     if (endpoint && endpoint.startsWith('http')) {
       try {
-        const probe = await axios.get(endpoint, {
+        const probe = await endpointHttp.get(endpoint, {
           timeout: 10000,
           validateStatus: () => true,
           headers: { 'User-Agent': 'HE-Status-Poller/1.0' },
@@ -48,7 +50,7 @@ export async function fetchStatus(endpoint: string): Promise<any> {
       }
     }
 
-    throw new Error(`Failed to fetch AWS status: ${error.message}`);
+    throw new Error(`Failed to fetch AWS status: ${error.message}`, { cause: error });
   }
 }
 
@@ -64,7 +66,7 @@ export function normalizeStatus(data: any): { status: string; message: string } 
     if (data.status_code >= 400) {
       return { status: 'degraded', message: `AWS service returned HTTP ${data.status_code}` };
     }
-    return { status: 'outage', message: data.error || 'AWS service unreachable' };
+    return { status: 'outage', message: 'AWS service unreachable' };
   }
 
   // AWS health data — check for current events

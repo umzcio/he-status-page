@@ -5,8 +5,10 @@ import pool from '../db/connection';
 
 // OIDC SSO routes, mounted under /api/admin/oidc.
 //
-// The flow mirrors CAS exactly on the security-sensitive parts:
-//  - authenticate via the IdP, then look the user up by lowercased email;
+// The flow mirrors CAS on the security-sensitive parts:
+//  - authenticate via the IdP, then find the account bound to the IdP subject
+//    (iss + sub); on an account's first OIDC login, match it by the verified,
+//    lowercased e-mail and bind it to that subject;
 //  - unknown users get the SAME "not authorized" error redirect CAS uses
 //    (SSO never auto-creates users);
 //  - on success we issue a one-time code and redirect with ONLY ?code=...
@@ -52,13 +54,24 @@ router.get('/callback', async (req, res) => {
 
     // client.callback validates signature/iss/aud/exp/nonce/state/PKCE and
     // throws on any failure.
-    const { email } = await oidc.handleCallback(req.query as Record<string, string>, flow);
+    const { email, issuer, subject } = await oidc.handleCallback(req.query as Record<string, string>, flow);
 
-    // Authorization model (unchanged): the user must already exist by email.
-    const userResult = await pool.query(
-      'SELECT id, email, name, role FROM users WHERE email = $1',
-      [email.toLowerCase()]
+    // Authorization: the user must already exist. An account already bound to
+    // this IdP subject wins; otherwise an unbound account with this e-mail is
+    // bound now. An account bound to a different subject never matches, so a
+    // second IdP user claiming the same e-mail is "not authorized".
+    let userResult = await pool.query(
+      'SELECT id, email, name, role FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2',
+      [issuer, subject]
     );
+    if (userResult.rows.length === 0) {
+      userResult = await pool.query(
+        `UPDATE users SET oidc_issuer = $1, oidc_subject = $2
+          WHERE email = $3 AND oidc_subject IS NULL
+          RETURNING id, email, name, role`,
+        [issuer, subject, email.toLowerCase()]
+      );
+    }
 
     if (userResult.rows.length === 0) {
       console.log(`OIDC user ${email} not authorized in HE Status`);

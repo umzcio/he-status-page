@@ -1,8 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import pool from '../../db/connection';
-import { JWT_SECRET } from '../../lib/config';
+import { verifySession, isSessionCurrent } from '../../lib/session';
 import { SESSION_COOKIE } from '../../lib/authCookies';
 
 interface AuthUser {
@@ -28,16 +27,20 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
 
   if (jwtToken) {
     try {
-      const decoded = jwt.verify(jwtToken, JWT_SECRET) as AuthUser;
+      const decoded = verifySession(jwtToken);
 
       // Load the user's CURRENT role/existence from the DB so demotion or
       // deletion takes effect immediately (rather than living for the token's
-      // full lifetime). Falls back to 401 if the user no longer exists.
+      // full lifetime), and reject tokens revoked by logout, password reset, or
+      // "revoke sessions" (see lib/session.ts).
       const result = await pool.query(
-        'SELECT id, email, role FROM users WHERE id = $1',
-        [decoded.id]
+        `SELECT u.id, u.email, u.role, u.token_version,
+                EXISTS (SELECT 1 FROM revoked_sessions r WHERE r.jti = $2) AS revoked
+           FROM users u
+          WHERE u.id = $1`,
+        [decoded.id, decoded.jti ?? null]
       );
-      if (result.rows.length === 0) {
+      if (result.rows.length === 0 || !isSessionCurrent(decoded, result.rows[0])) {
         return res.status(401).json({ error: 'Invalid token' });
       }
 

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { endpointHttp, MAX_VENDOR_FEED_BYTES } from '../lib/endpointHttp';
 
 /**
  * Adapter for Google Workspace Status Dashboard
@@ -13,6 +14,7 @@ export async function fetchStatus(endpoint: string): Promise<any> {
     // Try fetching the Google Workspace status JSON feed
     const response = await axios.get(GOOGLE_STATUS_URL, {
       timeout: 10000,
+      maxContentLength: MAX_VENDOR_FEED_BYTES,
       headers: { 'User-Agent': 'HE-Status-Poller/1.0' },
     });
 
@@ -39,7 +41,7 @@ export async function fetchStatus(endpoint: string): Promise<any> {
     // Fallback: probe the endpoint directly if provided
     if (endpoint && endpoint.startsWith('http')) {
       try {
-        const probe = await axios.get(endpoint, {
+        const probe = await endpointHttp.get(endpoint, {
           timeout: 10000,
           validateStatus: () => true,
           headers: { 'User-Agent': 'HE-Status-Poller/1.0' },
@@ -59,7 +61,7 @@ export async function fetchStatus(endpoint: string): Promise<any> {
       }
     }
 
-    throw new Error(`Failed to fetch Google status: ${error.message}`);
+    throw new Error(`Failed to fetch Google status: ${error.message}`, { cause: error });
   }
 }
 
@@ -75,7 +77,7 @@ export function normalizeStatus(data: any): { status: string; message: string } 
     if (data.status_code >= 400) {
       return { status: 'degraded', message: `Service returned HTTP ${data.status_code}` };
     }
-    return { status: 'outage', message: data.error || 'Service unreachable' };
+    return { status: 'outage', message: 'Service unreachable' };
   }
 
   // Google status feed

@@ -28,6 +28,8 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
+# Containers must listen beyond loopback; see HOST in .env.example.
+ENV HOST=0.0.0.0
 
 # Copy workspace config
 COPY package.json package-lock.json ./

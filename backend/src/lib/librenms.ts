@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { libreNmsSegment } from '@he-status/shared';
 
 const LIBRENMS_URL = () => (process.env.LIBRENMS_URL || '').replace(/\/+$/, '');
 const LIBRENMS_TOKEN = () => process.env.LIBRENMS_API_TOKEN || '';
@@ -25,15 +26,22 @@ async function apiGet<T>(path: string): Promise<T> {
     throw new Error('LibreNMS credentials not configured (LIBRENMS_URL / LIBRENMS_API_TOKEN)');
   }
 
-  const response = await axios.get(`${baseUrl}${path}`, {
-    timeout: 15000,
-    headers: {
-      'X-Auth-Token': token,
-      'User-Agent': 'HE-Status-Backend/1.0',
-    },
-  });
-
-  return response.data;
+  try {
+    const response = await axios.get(`${baseUrl}${path}`, {
+      timeout: 15000,
+      headers: {
+        'X-Auth-Token': token,
+        'User-Agent': 'HE-Status-Backend/1.0',
+      },
+    });
+    return response.data;
+  } catch (err: any) {
+    // Never let the AxiosError escape: its config carries the X-Auth-Token header.
+    const status = err?.response?.status;
+    throw new Error(
+      status ? `LibreNMS API returned HTTP ${status}` : `LibreNMS API request failed (${err?.code || 'network error'})`
+    );
+  }
 }
 
 export async function listDevices(): Promise<any[]> {
@@ -59,7 +67,7 @@ export async function listGroups(): Promise<any[]> {
 }
 
 export async function listServicesForDevice(hostname: string): Promise<any[]> {
-  const data = await apiGet<{ services: any }>(`/api/v0/services/${hostname}`);
+  const data = await apiGet<{ services: any }>(`/api/v0/services/${libreNmsSegment(hostname)}`);
   let services = data.services || [];
   if (Array.isArray(services) && services.length > 0 && Array.isArray(services[0])) {
     services = services.flat();

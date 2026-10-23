@@ -1,5 +1,11 @@
-import axios from 'axios';
 import { STATUS_COLORS, STATUS_ICONS, STATUS_LABELS } from './constants';
+import { createGuardedHttpClient } from './urlGuard';
+import { cleanStatusText } from './text';
+
+// Teams / Power Automate webhooks are public HTTPS endpoints that never
+// redirect, so delivery is held to the strictest policy: public addresses only
+// (checked at connect time) and no redirects.
+const webhookHttp = createGuardedHttpClient({ allowPrivate: false, maxRedirects: 0, maxContentLength: 64 * 1024 });
 
 export interface QueryExecutor {
   query(text: string, params?: any[]): Promise<{ rows: any[] }>;
@@ -52,8 +58,19 @@ export async function getActiveWebhooks(db: QueryExecutor, categorySlug?: string
   return result.rows;
 }
 
+// Adaptive Card TextBlock and Fact values render markdown (links, emphasis,
+// lists). Values that come from providers or users are cleaned to bounded plain
+// text and backslash-escaped so they render literally, never as a link.
+export function escapeCardMarkdown(value: unknown): string {
+  return cleanStatusText(value)
+    .replace(/[\\`*_~[\]()<>]/g, '\\$&') // links, autolinks, emphasis, code
+    .replace(/^([-+]|\d+\.)(?=\s)/, '\\$1'); // a leading list marker
+}
+
 export function buildStatusChangeCard(params: NotifyParams): object {
-  const { serviceName, oldStatus, newStatus, statusMessage, overrideInfo } = params;
+  const { oldStatus, newStatus, overrideInfo } = params;
+  const serviceName = escapeCardMarkdown(params.serviceName);
+  const statusMessage = escapeCardMarkdown(params.statusMessage);
   const icon = STATUS_ICONS[newStatus as keyof typeof STATUS_ICONS] || STATUS_ICONS.unknown;
   const publicUrl = process.env.PUBLIC_URL || 'http://localhost:3001';
 
@@ -66,9 +83,9 @@ export function buildStatusChangeCard(params: NotifyParams): object {
     if (overrideInfo.isRemoval) {
       facts.push({ title: 'Action', value: 'Override Removed' });
     }
-    facts.push({ title: 'Set by', value: overrideInfo.userName });
+    facts.push({ title: 'Set by', value: escapeCardMarkdown(overrideInfo.userName) });
     if (overrideInfo.reason) {
-      facts.push({ title: 'Reason', value: overrideInfo.reason });
+      facts.push({ title: 'Reason', value: escapeCardMarkdown(overrideInfo.reason) });
     }
   }
 
@@ -124,12 +141,15 @@ export async function sendTeamsWebhook(
 ): Promise<{ success: boolean; error?: string; responseTimeMs: number }> {
   const start = Date.now();
   try {
-    await axios.post(webhookUrl, payload, { timeout: 10000 });
+    if (!webhookUrl.startsWith('https://')) {
+      throw new Error('Webhook URL must use https://');
+    }
+    await webhookHttp.post(webhookUrl, payload, { timeout: 10000 });
     return { success: true, responseTimeMs: Date.now() - start };
   } catch (err: any) {
-    const message = err.response
-      ? `HTTP ${err.response.status}: ${JSON.stringify(err.response.data).slice(0, 200)}`
-      : err.message;
+    // Only the status code: the target's response body is never echoed back
+    // to the admin API or stored in teams_webhook_logs.
+    const message = err.response ? `HTTP ${err.response.status}` : err.message;
     return { success: false, error: message, responseTimeMs: Date.now() - start };
   }
 }

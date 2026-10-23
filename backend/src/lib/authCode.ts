@@ -20,6 +20,7 @@ export interface AuthCodeUser {
   email: string;
   role: string;
   name: string;
+  token_version: number;
 }
 
 function hashCode(code: string): string {
@@ -81,7 +82,7 @@ export async function consumeAuthCode(code: string): Promise<AuthCodeUser | null
   const userId = claim.rows[0].user_id;
 
   const userResult = await pool.query(
-    'SELECT id, email, name, role FROM users WHERE id = $1',
+    'SELECT id, email, name, role, token_version FROM users WHERE id = $1',
     [userId]
   );
 
@@ -90,5 +91,11 @@ export async function consumeAuthCode(code: string): Promise<AuthCodeUser | null
   }
 
   const row = userResult.rows[0];
-  return { id: row.id, email: row.email, name: row.name, role: row.role };
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    role: row.role,
+    token_version: row.token_version,
+  };
 }

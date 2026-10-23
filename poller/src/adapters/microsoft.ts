@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { MAX_VENDOR_FEED_BYTES } from '../lib/endpointHttp';
 
 /**
  * Adapter for Microsoft 365 Graph API
@@ -54,7 +55,7 @@ async function getAccessToken(): Promise<string> {
 
     return cachedToken;
   } catch (error: any) {
-    throw new Error(`Failed to get Microsoft access token: ${error.message}`);
+    throw new Error(`Failed to get Microsoft access token: ${error.message}`, { cause: error });
   }
 }
 
@@ -68,7 +69,8 @@ export async function fetchStatus(endpoint: string): Promise<any> {
         headers: {
           'Authorization': `Bearer ${token}`
         },
-        timeout: 10000
+        timeout: 10000,
+        maxContentLength: MAX_VENDOR_FEED_BYTES,
       }
     );
 
@@ -84,7 +86,7 @@ export async function fetchStatus(endpoint: string): Promise<any> {
         }]
       };
     }
-    throw new Error(`Failed to fetch Microsoft status: ${error.message}`);
+    throw new Error(`Failed to fetch Microsoft status: ${error.message}`, { cause: error });
   }
 }
 

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { endpointHttp, MAX_VENDOR_FEED_BYTES } from '../lib/endpointHttp';
 
 /**
  * Adapter for Apple System Status
@@ -13,6 +14,7 @@ export async function fetchStatus(endpoint: string): Promise<any> {
     // Apple's system status page loads data from a JS file that contains JSON
     const response = await axios.get(APPLE_STATUS_URL, {
       timeout: 10000,
+      maxContentLength: MAX_VENDOR_FEED_BYTES,
       headers: { 'User-Agent': 'HE-Status-Poller/1.0' },
     });
 
@@ -46,7 +48,7 @@ export async function fetchStatus(endpoint: string): Promise<any> {
     // Fallback: probe the endpoint directly
     if (endpoint && endpoint.startsWith('http')) {
       try {
-        const probe = await axios.get(endpoint, {
+        const probe = await endpointHttp.get(endpoint, {
           timeout: 10000,
           validateStatus: () => true,
           headers: { 'User-Agent': 'HE-Status-Poller/1.0' },
@@ -66,7 +68,7 @@ export async function fetchStatus(endpoint: string): Promise<any> {
       }
     }
 
-    throw new Error(`Failed to fetch Apple status: ${error.message}`);
+    throw new Error(`Failed to fetch Apple status: ${error.message}`, { cause: error });
   }
 }
 
@@ -82,7 +84,7 @@ export function normalizeStatus(data: any): { status: string; message: string } 
     if (data.status_code >= 400) {
       return { status: 'degraded', message: `Apple service returned HTTP ${data.status_code}` };
     }
-    return { status: 'outage', message: data.error || 'Apple service unreachable' };
+    return { status: 'outage', message: 'Apple service unreachable' };
   }
 
   // Apple status feed

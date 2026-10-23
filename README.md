@@ -158,7 +158,8 @@ All configuration lives in a single `.env` file at the repo root (copy from `.en
 | --------------------------- | ------------------------------------------------------------------------------------------------------- | --------- |
 | `NODE_ENV`                  | `development` or `production`                                                                           | `development` |
 | `PORT`                      | Port the backend API listens on (the value the backend actually reads)                                 | `3000`    |
-| `TRUST_PROXY_HOPS`          | Number of reverse-proxy hops in front of the backend (Express `trust proxy`; affects `req.ip`)         | `1`       |
+| `HOST`                      | Interface the backend listens on. `127.0.0.1` accepts only a same-host reverse proxy; set `0.0.0.0` if the proxy is elsewhere (docker-compose does) | `127.0.0.1` |
+| `TRUST_PROXY`               | Comma-separated addresses/CIDRs (or `loopback`, `linklocal`, `uniquelocal`) of proxies allowed to set `X-Forwarded-For`. Hop counts are rejected because they trust any peer | `loopback` |
 | `RATE_LIMIT_PUBLIC_ENABLED` | Set `false` to disable the public API rate limiter (does not affect login/subscribe limiters)          | `true`    |
 
 ### Auth
@@ -184,6 +185,12 @@ are unaffected (they are not CSRF-able and skip the CSRF check).
 | `POLLER_INTERVAL_MINUTES` | How often the poller checks services | `5`     |
 | `POLLER_ENABLED`          | Set `false` to disable polling       | `true`  |
 | `POLLER_ALLOW_PRIVATE_ENDPOINTS` | Allow endpoints resolving to private/loopback/link-local addresses (cloud metadata always blocked) | `false` |
+
+Admin-configured status endpoints are checked against this address policy when a
+service is saved and again on every connection the poller makes, including each
+redirect hop, so DNS rebinding or a redirect to an internal host can't get around
+it. Teams webhook URLs follow a stricter rule regardless of this setting: they must
+be `https://` URLs on public addresses, and redirects are not followed.
 
 ### Branding (rebrand in one place)
 
@@ -272,6 +279,17 @@ Shibboleth-OIDC. The authorization-code flow uses PKCE (S256) and validates the
 | `OIDC_CLIENT_SECRET` | OAuth client secret                                          | _(empty)_                                            |
 | `OIDC_REDIRECT_URI`  | Callback URL registered with the IdP                         | `${PUBLIC_URL}/api/admin/oidc/callback`              |
 | `OIDC_SCOPES`        | Space-separated scopes requested                             | `openid email profile`                               |
+| `OIDC_EMAIL_CLAIM`   | Claim used as the account e-mail. Use `preferred_username` for Entra ID | `email`                                   |
+| `OIDC_REQUIRE_EMAIL_VERIFIED` | Accept the `email` claim only with `email_verified: true`. Set `false` only if users cannot edit their e-mail at the IdP | `true` |
+
+An `email` claim is accepted only when the IdP marks it verified; otherwise anyone
+who can set their own profile e-mail at the IdP could claim an admin's address.
+Entra ID never sends `email_verified`, so set `OIDC_EMAIL_CLAIM=preferred_username`
+(the tenant-managed UPN) there. On an account's first OIDC login the backend binds
+it to the IdP's issuer and subject (`iss` + `sub`); later logins must present the
+same subject, so a different IdP user with the same e-mail is rejected. If an
+admin's IdP account is recreated, clear the binding:
+`UPDATE users SET oidc_issuer = NULL, oidc_subject = NULL WHERE email = '...';`
 
 SAML 2.0 is disabled unless `SAML_ENTRY_POINT`, `SAML_ISSUER`, and an IdP
 certificate (`SAML_IDP_CERT` or `SAML_IDP_CERT_FILE`) are all set. It works with
@@ -357,9 +375,9 @@ sudo systemctl enable --now hestatus-backend hestatus-frontend hestatus-poller
 
 Reverse-proxy expectations:
 
-- Terminate TLS at a reverse proxy (e.g. nginx) and forward to the backend (`:3000`) and frontend (`127.0.0.1:3001`).
+- Terminate TLS at a reverse proxy (e.g. nginx) and forward to the backend (`127.0.0.1:3000`) and frontend (`127.0.0.1:3001`). The backend listens on loopback only unless you set `HOST`.
 - If you serve the app under a path prefix (e.g. `https://status.example.edu/status`), set `NEXT_PUBLIC_BASE_PATH=/status`, route `<prefix>/api` to the backend, and set `NEXT_PUBLIC_API_URL` to that prefix (e.g. `/status`) so the browser reaches the API at the right path. Serving at the domain root? Leave both empty.
-- Set `TRUST_PROXY_HOPS` to the number of proxies in front of the backend so client IPs (rate limiting, logging) resolve correctly.
+- If the proxy is not on the same host, set `HOST=0.0.0.0`, firewall the backend port to the proxy, and set `TRUST_PROXY` to the proxy's address(es) so client IPs (rate limiting, logging) resolve correctly. Behind a load balancer → nginx chain, list both (e.g. `TRUST_PROXY=loopback,10.0.0.0/24`).
 
 ### Security checklist
 
@@ -369,7 +387,7 @@ Reverse-proxy expectations:
 - [ ] Run the app behind TLS (terminate HTTPS at your reverse proxy).
 - [ ] Leave `COOKIE_SECURE` at its production default (`true`) so session cookies are HTTPS-only — set `false` only for local http dev.
 - [ ] Restrict database access to the app hosts only.
-- [ ] Configure `FRONTEND_URL` and `TRUST_PROXY_HOPS` to match your deployment.
+- [ ] Configure `FRONTEND_URL`, `HOST`, and `TRUST_PROXY` to match your deployment.
 
 ## Provider adapters
 

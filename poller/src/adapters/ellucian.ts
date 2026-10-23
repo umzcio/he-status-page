@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { endpointHttp } from '../lib/endpointHttp';
 
 /**
  * Adapter for Ellucian Banner Managed Cloud services
@@ -22,7 +22,7 @@ export async function fetchStatus(endpoint: string): Promise<EllucianResponse> {
   const isActuator = endpoint.includes('/actuator/health');
 
   try {
-    const response = await axios.get(endpoint, {
+    const response = await endpointHttp.get(endpoint, {
       timeout: 15000,
       maxRedirects: 3,
       validateStatus: () => true, // Don't throw on any HTTP status
@@ -47,7 +47,7 @@ export async function fetchStatus(endpoint: string): Promise<EllucianResponse> {
     // Network-level errors (DNS, connection refused, timeout) — throw so the
     // caller's retry/circuit-breaker (resilientFetch) can retry before giving up,
     // instead of silently treating the failure as a successful fetch.
-    throw new Error(`Failed to fetch Ellucian status from ${endpoint}: ${error.code || error.message || 'Unknown error'}`);
+    throw new Error(`Failed to fetch Ellucian status: ${error.code || error.message || 'Unknown error'}`, { cause: error });
   }
 }
 
