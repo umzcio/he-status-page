@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { MAX_VENDOR_FEED_BYTES } from '../lib/endpointHttp';
+import { MAX_VENDOR_FEED_BYTES, fetchDeadline } from '../lib/endpointHttp';
 
 /**
  * Adapter for Microsoft 365 Graph API
@@ -46,7 +46,10 @@ async function getAccessToken(): Promise<string> {
       {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded'
-        }
+        },
+        timeout: 10000,
+        maxContentLength: MAX_VENDOR_FEED_BYTES,
+        signal: fetchDeadline(),
       }
     );
 
@@ -71,6 +74,7 @@ export async function fetchStatus(endpoint: string): Promise<any> {
         },
         timeout: 10000,
         maxContentLength: MAX_VENDOR_FEED_BYTES,
+        signal: fetchDeadline(),
       }
     );
 

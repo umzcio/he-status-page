@@ -120,4 +120,23 @@ describe('createGuardedHttpClient', () => {
     const res = await client.get(`http://127.0.0.1:${target.port}/`);
     expect(res.data).toEqual({ ok: true });
   });
+
+  it('enforces a wall-clock deadline on a slowly trickled body', async () => {
+    // Headers at once, then one byte every 100 ms: the inactivity timeout never
+    // fires, so only the overall deadline can end the request.
+    const timers: NodeJS.Timeout[] = [];
+    const drip = await server((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      const t = setInterval(() => res.write(' '), 100);
+      timers.push(t);
+      res.on('close', () => clearInterval(t));
+    });
+    const client = createGuardedHttpClient({ allowPrivate: true, deadlineMs: 500 });
+    const started = Date.now();
+    await expect(client.get(`http://127.0.0.1:${drip.port}/`, { timeout: 10_000 })).rejects.toMatchObject({
+      code: 'ERR_CANCELED',
+    });
+    expect(Date.now() - started).toBeLessThan(3000);
+    timers.forEach(clearInterval);
+  });
 });

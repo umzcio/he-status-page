@@ -338,6 +338,12 @@ export interface GuardedClientOptions extends GuardPolicy {
   maxRedirects?: number;
   /** Largest response body accepted, in bytes; bigger bodies fail the request. Default 2 MB. */
   maxContentLength?: number;
+  /**
+   * Wall-clock budget for a whole request, from start to the last body byte
+   * (axios' `timeout` only covers inactivity, so a slowly trickled body would
+   * otherwise never finish). Default 30 s.
+   */
+  deadlineMs?: number;
   /** DNS resolver override, for tests. */
   resolve?: Resolver;
 }
@@ -356,9 +362,11 @@ export function createGuardedHttpClient(options: GuardedClientOptions = {}): Axi
       assertTargetAllowed(redirect.protocol, redirect.hostname, policy);
     },
   });
+  const deadlineMs = options.deadlineMs ?? 30_000;
   client.interceptors.request.use((config) => {
     const url = new URL(client.getUri(config));
     assertTargetAllowed(url.protocol, url.hostname, policy);
+    config.signal = config.signal ?? AbortSignal.timeout(deadlineMs);
     return config;
   });
   return client;

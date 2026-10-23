@@ -26,6 +26,19 @@ const HEALTH_PORT = process.env.POLLER_HEALTH_PORT || 3002;
 let lastPollCompleted: Date | null = null;
 let lastPollDurationMs = 0;
 let isPolling = false;
+let pollStartedAt: Date | null = null;
+
+// Upper bound on one service check, retries included (each request is itself
+// capped at FETCH_DEADLINE_MS). A check that overruns is abandoned and logged.
+const CHECK_DEADLINE_MS = 3 * 60 * 1000;
+
+function withDeadline<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} exceeded ${ms} ms`)), ms);
+  });
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
+}
 
 interface Service {
   id: string;
@@ -190,6 +203,7 @@ async function checkServiceStatus(service: Service): Promise<void> {
 async function runPollingCycle(): Promise<void> {
   const cycleStart = Date.now();
   isPolling = true;
+  pollStartedAt = new Date(cycleStart);
 
   logger.info('Starting status check cycle');
 
@@ -205,12 +219,14 @@ async function runPollingCycle(): Promise<void> {
 
     logger.info({ count: services.length }, 'Services to check');
 
-    // Check services in parallel batches (max 5 concurrent to avoid connection exhaustion)
+    // Check services in parallel batches (max 5 concurrent to avoid connection exhaustion).
+    // Each check gets a deadline so one that never settles can't hold up the
+    // rest of the cycle (and, through isPolling, every later cycle).
     const BATCH_SIZE = 5;
     for (let i = 0; i < services.length; i += BATCH_SIZE) {
       const batch = services.slice(i, i + BATCH_SIZE);
       await Promise.allSettled(
-        batch.map(service => checkServiceStatus(service))
+        batch.map(service => withDeadline(checkServiceStatus(service), CHECK_DEADLINE_MS, `Check of ${service.name}`))
       );
     }
 
@@ -223,6 +239,7 @@ async function runPollingCycle(): Promise<void> {
     logger.error({ err: error }, 'Error in polling cycle');
   } finally {
     isPolling = false;
+    pollStartedAt = null;
     lastPollCompleted = new Date();
     lastPollDurationMs = Date.now() - cycleStart;
   }
@@ -233,6 +250,7 @@ const healthServer = createHealthServer(() => ({
   lastPollCompleted,
   lastPollDurationMs,
   isPolling,
+  pollStartedAt,
   intervalMinutes: parseInt(POLLER_INTERVAL),
 }));
 

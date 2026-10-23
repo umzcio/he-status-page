@@ -32,7 +32,12 @@ export function publicFetchFailureMessage(err: unknown): string {
     if (typeof status === 'number') {
       return `Service unreachable (status check returned HTTP ${status})`;
     }
-    if (e.code === 'ECONNABORTED' || e.code === 'ETIMEDOUT' || /timeout/i.test(String(e.message))) {
+    if (
+      e.code === 'ECONNABORTED' ||
+      e.code === 'ETIMEDOUT' ||
+      e.code === 'ERR_CANCELED' || // the wall-clock deadline (AbortSignal.timeout)
+      /timeout|aborted/i.test(String(e.message))
+    ) {
       return 'Service unreachable (status check timed out)';
     }
   }
