@@ -15,7 +15,9 @@ describe('sendTeamsWebhook', () => {
 
   it('uses a strict client: public addresses only, no redirects', async () => {
     await import('../teams');
-    expect(createGuardedHttpClient).toHaveBeenCalledWith({ allowPrivate: false, maxRedirects: 0 });
+    expect(createGuardedHttpClient).toHaveBeenCalledWith(
+      expect.objectContaining({ allowPrivate: false, maxRedirects: 0 })
+    );
   });
 
   it('reports only the status code of a failed delivery', async () => {

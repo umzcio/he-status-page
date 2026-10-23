@@ -1,10 +1,11 @@
 import { STATUS_COLORS, STATUS_ICONS, STATUS_LABELS } from './constants';
 import { createGuardedHttpClient } from './urlGuard';
+import { cleanStatusText } from './text';
 
 // Teams / Power Automate webhooks are public HTTPS endpoints that never
 // redirect, so delivery is held to the strictest policy: public addresses only
 // (checked at connect time) and no redirects.
-const webhookHttp = createGuardedHttpClient({ allowPrivate: false, maxRedirects: 0 });
+const webhookHttp = createGuardedHttpClient({ allowPrivate: false, maxRedirects: 0, maxContentLength: 64 * 1024 });
 
 export interface QueryExecutor {
   query(text: string, params?: any[]): Promise<{ rows: any[] }>;
@@ -57,8 +58,19 @@ export async function getActiveWebhooks(db: QueryExecutor, categorySlug?: string
   return result.rows;
 }
 
+// Adaptive Card TextBlock and Fact values render markdown (links, emphasis,
+// lists). Values that come from providers or users are cleaned to bounded plain
+// text and backslash-escaped so they render literally, never as a link.
+export function escapeCardMarkdown(value: unknown): string {
+  return cleanStatusText(value)
+    .replace(/[\\`*_~[\]()<>]/g, '\\$&') // links, autolinks, emphasis, code
+    .replace(/^([-+]|\d+\.)(?=\s)/, '\\$1'); // a leading list marker
+}
+
 export function buildStatusChangeCard(params: NotifyParams): object {
-  const { serviceName, oldStatus, newStatus, statusMessage, overrideInfo } = params;
+  const { oldStatus, newStatus, overrideInfo } = params;
+  const serviceName = escapeCardMarkdown(params.serviceName);
+  const statusMessage = escapeCardMarkdown(params.statusMessage);
   const icon = STATUS_ICONS[newStatus as keyof typeof STATUS_ICONS] || STATUS_ICONS.unknown;
   const publicUrl = process.env.PUBLIC_URL || 'http://localhost:3001';
 
@@ -71,9 +83,9 @@ export function buildStatusChangeCard(params: NotifyParams): object {
     if (overrideInfo.isRemoval) {
       facts.push({ title: 'Action', value: 'Override Removed' });
     }
-    facts.push({ title: 'Set by', value: overrideInfo.userName });
+    facts.push({ title: 'Set by', value: escapeCardMarkdown(overrideInfo.userName) });
     if (overrideInfo.reason) {
-      facts.push({ title: 'Reason', value: overrideInfo.reason });
+      facts.push({ title: 'Reason', value: escapeCardMarkdown(overrideInfo.reason) });
     }
   }
 

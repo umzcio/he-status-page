@@ -4,4 +4,5 @@ export * from './errors';
 export * from './html';
 export * from './librenms';
 export * from './teams';
+export * from './text';
 export * from './urlGuard';

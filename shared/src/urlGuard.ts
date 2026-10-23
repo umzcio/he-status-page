@@ -327,6 +327,8 @@ export function createGuardedLookup(policy: GuardPolicy = {}, resolve: Resolver 
 export interface GuardedClientOptions extends GuardPolicy {
   /** Redirect hops to follow (each one re-checked). Default 5. */
   maxRedirects?: number;
+  /** Largest response body accepted, in bytes; bigger bodies fail the request. Default 2 MB. */
+  maxContentLength?: number;
   /** DNS resolver override, for tests. */
   resolve?: Resolver;
 }
@@ -339,6 +341,7 @@ export function createGuardedHttpClient(options: GuardedClientOptions = {}): Axi
   const policy: GuardPolicy = { allowPrivate: options.allowPrivate };
   const client = axios.create({
     maxRedirects: options.maxRedirects ?? 5,
+    maxContentLength: options.maxContentLength ?? 2 * 1024 * 1024,
     lookup: createGuardedLookup(policy, options.resolve),
     beforeRedirect: (redirect: Record<string, any>) => {
       assertTargetAllowed(redirect.protocol, redirect.hostname, policy);

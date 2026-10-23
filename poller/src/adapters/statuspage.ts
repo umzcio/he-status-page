@@ -1,3 +1,4 @@
+import { cleanStatusText } from '@he-status/shared';
 import { endpointHttp } from '../lib/endpointHttp';
 
 /**
@@ -39,6 +40,6 @@ export function normalizeStatus(data: StatusPageResponse): { status: string; mes
 
   return {
     status: statusMap[indicator] || 'unknown',
-    message: data.status?.description || 'Status unknown'
+    message: cleanStatusText(data.status?.description) || 'Status unknown'
   };
 }

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { endpointHttp } from '../lib/endpointHttp';
+import { endpointHttp, MAX_VENDOR_FEED_BYTES } from '../lib/endpointHttp';
 
 /**
  * Adapter for Apple System Status
@@ -14,6 +14,7 @@ export async function fetchStatus(endpoint: string): Promise<any> {
     // Apple's system status page loads data from a JS file that contains JSON
     const response = await axios.get(APPLE_STATUS_URL, {
       timeout: 10000,
+      maxContentLength: MAX_VENDOR_FEED_BYTES,
       headers: { 'User-Agent': 'HE-Status-Poller/1.0' },
     });
 

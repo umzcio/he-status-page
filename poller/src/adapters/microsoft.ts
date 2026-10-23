@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { MAX_VENDOR_FEED_BYTES } from '../lib/endpointHttp';
 
 /**
  * Adapter for Microsoft 365 Graph API
@@ -68,7 +69,8 @@ export async function fetchStatus(endpoint: string): Promise<any> {
         headers: {
           'Authorization': `Bearer ${token}`
         },
-        timeout: 10000
+        timeout: 10000,
+        maxContentLength: MAX_VENDOR_FEED_BYTES,
       }
     );
 

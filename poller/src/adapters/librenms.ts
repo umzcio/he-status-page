@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { MAX_VENDOR_FEED_BYTES } from '../lib/endpointHttp';
 import { libreNmsSegment, parseLibreNmsEndpoint } from '@he-status/shared';
 import { UpstreamError } from '../lib/fetchErrors';
 
@@ -97,6 +98,7 @@ async function apiGet<T>(path: string): Promise<T> {
   try {
     const response = await axios.get(`${baseUrl}${path}`, {
       timeout: 15000,
+      maxContentLength: MAX_VENDOR_FEED_BYTES,
       headers: {
         'X-Auth-Token': token,
         'User-Agent': 'HE-Status-Poller/1.0',

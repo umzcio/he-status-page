@@ -13,7 +13,7 @@ import { queueNotifications, notifyDependents } from './lib/notificationQueue';
 import { createHealthServer } from './lib/healthServer';
 import { runDataRetentionIfDue } from './lib/retention';
 import { autoCreateIncident, autoResolveIncident } from './lib/incidents';
-import { assertEndpointAllowed } from '@he-status/shared';
+import { assertEndpointAllowed, cleanStatusText } from '@he-status/shared';
 import logger from './lib/logger';
 
 dotenv.config({ path: path.join(__dirname, '../../.env') });
@@ -86,7 +86,12 @@ async function checkServiceStatus(service: Service): Promise<void> {
         () => adapter.fetchStatus(service.status_api_endpoint)
       );
 
-      normalizedStatus = adapter.normalizeStatus(statusData);
+      const normalized = adapter.normalizeStatus(statusData);
+      // Provider text is untrusted: store and publish it only as bounded plain text.
+      normalizedStatus = {
+        status: normalized.status,
+        message: cleanStatusText(normalized.message) || 'Status unknown',
+      };
     } catch (fetchErr: any) {
       if (statusData !== null) {
         // fetchStatus succeeded but normalizeStatus threw — an adapter bug,
