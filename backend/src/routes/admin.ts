@@ -14,7 +14,7 @@ import { logAdminAction } from '../lib/adminLog';
 import { autoCreateIncident, autoResolveIncident } from '../lib/incidents';
 import { issueSession, clearSession, SESSION_COOKIE } from '../lib/authCookies';
 import { signSession, revokeSessionToken } from '../lib/session';
-import { setDeviceCookie } from '../lib/loginThrottle';
+import { applyAccountDelay, recordAccountFailure } from '../lib/loginThrottle';
 
 const router = Router();
 
@@ -168,6 +168,10 @@ router.post('/login', [
 
     const { email, password } = req.body;
 
+    // Slow down accounts under attack, for right and wrong passwords alike
+    // (lib/loginThrottle.ts).
+    await applyAccountDelay(email);
+
     const result = await pool.query(
       'SELECT * FROM users WHERE email = $1',
       [email]
@@ -178,6 +182,7 @@ router.post('/login', [
     const storedHash: string | null = user?.hashed_password || null;
     const validPassword = await bcrypt.compare(password, storedHash || DUMMY_PASSWORD_HASH);
     if (!user || !storedHash || !validPassword) {
+      await recordAccountFailure(email);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -190,10 +195,8 @@ router.post('/login', [
     );
 
     // Set the JWT as an HttpOnly cookie (+ CSRF cookie). The token is NEVER
-    // returned in the body. The device cookie exempts this browser from the
-    // per-account lockout (lib/loginThrottle.ts).
+    // returned in the body.
     issueSession(res, token);
-    setDeviceCookie(res, user.email);
 
     res.json({
       user: {

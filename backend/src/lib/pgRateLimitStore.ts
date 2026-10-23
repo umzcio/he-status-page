@@ -61,6 +61,16 @@ export class PgRateLimitStore {
     };
   }
 
+  async get(key: string): Promise<IncrementResponse | undefined> {
+    await this.ensureTable();
+    const result = await pool.query(
+      'SELECT hits, reset_at FROM rate_limits WHERE key = $1 AND reset_at > NOW()',
+      [this.prefixedKey(key)]
+    );
+    if (result.rows.length === 0) return undefined;
+    return { totalHits: result.rows[0].hits, resetTime: result.rows[0].reset_at };
+  }
+
   async decrement(key: string): Promise<void> {
     await this.ensureTable();
     const pkey = this.prefixedKey(key);

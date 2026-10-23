@@ -23,12 +23,30 @@ export function resolveTrustProxy(env: NodeJS.ProcessEnv = process.env): TrustPr
     );
   }
 
-  if (!raw) return { value: ['loopback'], warnings };
+  if (!raw) {
+    if (env.REQUIRE_TRUST_PROXY === 'true') {
+      // Set by docker-compose: behind a proxy container, the loopback default
+      // would put every visitor in the proxy's single rate-limit bucket.
+      throw new Error(
+        'TRUST_PROXY must be set to your reverse proxy\'s IP address(es) (e.g. TRUST_PROXY=172.28.0.10). ' +
+          'See README, "Docker Compose".'
+      );
+    }
+    return { value: ['loopback'], warnings };
+  }
   if (raw === 'false') return { value: false, warnings };
 
   const entries = raw.split(',').map((v) => v.trim()).filter(Boolean);
   const rejected = entries.filter((v) => v === 'true' || /^\d+$/.test(v));
   const accepted = entries.filter((v) => !rejected.includes(v));
+
+  const broad = accepted.filter((v) => v === 'uniquelocal' || v === 'linklocal');
+  if (broad.length > 0) {
+    warnings.push(
+      `TRUST_PROXY includes ${broad.join(', ')}: every address in that range is trusted to set ` +
+        'X-Forwarded-For, so a client with such an address can forge its IP. List your proxy\'s address instead.'
+    );
+  }
 
   if (rejected.length > 0) {
     warnings.push(

@@ -30,6 +30,10 @@ function fakeQuery(sql: string, params: unknown[] = []) {
     hits.set(key, (hits.get(key) ?? 0) + 1);
     return Promise.resolve({ rows: [{ hits: hits.get(key), reset_at: params[1] }] });
   }
+  if (/SELECT hits, reset_at FROM rate_limits/.test(sql)) {
+    const hit = hits.get(params[0] as string);
+    return Promise.resolve({ rows: hit ? [{ hits: hit, reset_at: new Date(Date.now() + 60_000) }] : [] });
+  }
   if (/UPDATE rate_limits SET hits = GREATEST/.test(sql)) {
     const key = params[0] as string;
     hits.set(key, Math.max((hits.get(key) ?? 0) - 1, 0));
@@ -41,6 +45,7 @@ describe('POST /api/admin/login', () => {
   const ORIGINAL_ENV = process.env;
   let url: string;
   let close: () => Promise<void>;
+  let delays: number[];
 
   beforeEach(async () => {
     vi.resetModules();
@@ -54,14 +59,20 @@ describe('POST /api/admin/login', () => {
     hits = new Map();
 
     const { default: adminRoutes } = await import('../routes/admin');
-    const { accountClientLimiter, accountLimiter } = await import('../lib/loginThrottle');
+    const throttle = await import('../lib/loginThrottle');
+    const { accountClientLimiter } = throttle;
+    // Record the per-account delays instead of actually waiting.
+    delays = [];
+    vi.spyOn(throttle.timing, 'sleep').mockImplementation(async (ms: number) => {
+      delays.push(ms);
+    });
     const app = express();
     // The test client is always 127.0.0.1, so trust it and let each test pick
     // its "client address" with X-Forwarded-For.
     app.set('trust proxy', ['loopback']);
     app.use(express.json());
     app.use(cookieParser());
-    app.use('/api/admin/login', accountClientLimiter, accountLimiter);
+    app.use('/api/admin/login', accountClientLimiter);
     app.use('/api/admin', adminRoutes);
     ({ url, close } = await listen(app));
   });
@@ -97,33 +108,27 @@ describe('POST /api/admin/login', () => {
     expect(await res.json()).toEqual({ error: 'Invalid credentials' });
   });
 
-  it('sets the session and device cookies on success', async () => {
+  it('sets only the session cookies on success', async () => {
     const res = await login('admin@example.edu', PASSWORD, '198.51.100.1');
     expect(res.status).toBe(200);
     const cookies = res.headers.getSetCookie().join('\n');
     expect(cookies).toMatch(/hsp_session=/);
-    expect(cookies).toMatch(/hsp_device=/);
+    expect(cookies).not.toMatch(/hsp_device=/);
   });
 
-  it('locks out guessing against one account from rotating addresses', async () => {
-    for (let i = 0; i < 10; i++) {
-      const res = await login('admin@example.edu', `wrong-${i}`, `203.0.113.${i + 1}`);
-      expect(res.status).toBe(401);
-    }
-    const blocked = await login('admin@example.edu', PASSWORD, '203.0.113.200');
-    expect(blocked.status).toBe(429);
-  });
-
-  it("does not lock out the real admin's known browser", async () => {
-    const first = await login('admin@example.edu', PASSWORD, '198.51.100.7');
-    const device = first.headers.getSetCookie().find((c) => c.startsWith('hsp_device='))!.split(';')[0];
-
+  it("an attacker's failures slow the account down but never lock the owner out", async () => {
     for (let i = 0; i < 12; i++) {
-      await login('admin@example.edu', `wrong-${i}`, `203.0.113.${i + 1}`);
+      expect((await login('admin@example.edu', `wrong-${i}`, `203.0.113.${i + 1}`)).status).toBe(401);
     }
+    // Attempts past the threshold were delayed, with a growing delay.
+    expect(delays.length).toBeGreaterThan(0);
+    expect(delays[1]).toBeGreaterThan(delays[0]);
 
-    const res = await login('admin@example.edu', PASSWORD, '198.51.100.7', device);
+    // The owner: a fresh client, no cookies, right password, still gets in.
+    const before = delays.length;
+    const res = await login('admin@example.edu', PASSWORD, '198.51.100.200');
     expect(res.status).toBe(200);
+    expect(delays.length).toBe(before + 1); // delayed like everyone else, not refused
   });
 
   it('limits failures per account from a single address', async () => {
@@ -132,20 +137,26 @@ describe('POST /api/admin/login', () => {
     }
     expect((await login('admin@example.edu', PASSWORD, '203.0.113.50')).status).toBe(429);
   });
+
+  it('treats a whole IPv6 /64 as one client', async () => {
+    for (let i = 1; i <= 5; i++) {
+      expect((await login('admin@example.edu', `wrong-${i}`, `2001:db8:0:0::${i}`)).status).toBe(401);
+    }
+    // Another address in the same /64 is the same client...
+    expect((await login('admin@example.edu', 'wrong-6', '2001:db8::ffff:1')).status).toBe(429);
+    // ...a different /64 is not.
+    expect((await login('admin@example.edu', 'wrong-7', '2001:db8:0:1::1')).status).toBe(401);
+  });
 });
 
-describe('device tokens', () => {
-  beforeEach(() => {
-    vi.resetModules();
-    process.env.JWT_SECRET = 'a-valid-secret-that-is-long-enough';
-  });
-
-  it('match only the account they were issued for, case-insensitively', async () => {
-    const { issueDeviceToken, deviceTokenMatches } = await import('../lib/loginThrottle');
-    const token = issueDeviceToken('Admin@Example.edu');
-    expect(deviceTokenMatches(token, 'admin@example.edu')).toBe(true);
-    expect(deviceTokenMatches(token, 'other@example.edu')).toBe(false);
-    expect(deviceTokenMatches('garbage', 'admin@example.edu')).toBe(false);
-    expect(deviceTokenMatches(undefined, 'admin@example.edu')).toBe(false);
+describe('clientKey', () => {
+  it('keeps IPv4 and reduces IPv6 to its /64', async () => {
+    const { clientKey } = await import('../lib/clientKey');
+    expect(clientKey('203.0.113.9')).toBe('203.0.113.9');
+    expect(clientKey('::ffff:203.0.113.9')).toBe('203.0.113.9');
+    expect(clientKey('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(clientKey('2001:db8:0:0:ffff:ffff:ffff:ffff')).toBe('2001:db8:0:0::/64');
+    expect(clientKey('2001:db8:0:1::1')).toBe('2001:db8:0:1::/64');
+    expect(clientKey(undefined)).toBe('unknown');
   });
 });

@@ -135,6 +135,15 @@ function reduceMapped({ version, bytes }: ParsedIP): ParsedIP {
   return { version, bytes };
 }
 
+/**
+ * Parse an IPv4 or IPv6 address to bytes, with IPv4-mapped IPv6 reduced to
+ * IPv4. Returns null if `ip` is not an address.
+ */
+export function parseIp(ip: string): { version: 4 | 6; bytes: number[] } | null {
+  const parsed = ipToBytes(ip);
+  return parsed ? reduceMapped(parsed) : null;
+}
+
 // --- Classification ---------------------------------------------------------
 
 function classifyV4(b: number[]): AddressCategory {
