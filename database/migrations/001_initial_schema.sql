@@ -1,4 +1,4 @@
--- UM IT Status Page - Initial Schema
+-- HE Status Page - Initial Schema
 -- PostgreSQL 16+
 
 -- Users Table (must be created first, referenced by other tables)
