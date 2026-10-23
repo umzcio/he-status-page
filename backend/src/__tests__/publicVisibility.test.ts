@@ -25,6 +25,18 @@ function fakeQuery(sql: string, params: unknown[] = []) {
   const filtersVisible = /visible IS NOT false/.test(sql);
   const allowed = svc && (svc.visible || !filtersVisible);
 
+  if (/AS affected_by/.test(sql)) {
+    // The public list: one visible service that depends on the hidden one,
+    // which is in outage. Only a visibility predicate on the dependency join
+    // keeps its name out.
+    const depFiltered = /JOIN services dep_s ON [^\n]*dep_s\.visible IS NOT false/.test(sql);
+    return Promise.resolve({
+      rows: [{
+        id: VISIBLE, name: 'Portal', category: 'web', status: 'degraded',
+        affected_by: depFiltered ? null : [{ name: 'Secret Backend', status: 'outage' }],
+      }],
+    });
+  }
   if (/SELECT 1 FROM services WHERE id = \$1/.test(sql)) {
     return Promise.resolve({ rows: allowed ? [{ '?column?': 1 }] : [] });
   }
@@ -77,6 +89,13 @@ describe('public visibility of hidden services', () => {
   it.each(['', '/uptime', '/history'])('GET /api/services/<hidden>%s is 404', async (suffix) => {
     const res = await fetch(`${url}/api/services/${HIDDEN}${suffix}`);
     expect(res.status).toBe(404);
+  });
+
+  it('the public list never names a hidden dependency', async () => {
+    const res = await fetch(`${url}/api/services`);
+    const text = await res.text();
+    expect(res.status).toBe(200);
+    expect(text).not.toContain('Secret Backend');
   });
 
   it('a malformed service id is 404, not 500', async () => {

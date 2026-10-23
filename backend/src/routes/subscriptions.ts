@@ -40,8 +40,7 @@ const SUBSCRIBE_RESPONSE = {
   message: 'Thanks! If this address can receive notifications, a confirmation email is on its way.',
 };
 
-// Send the verification mail without making the response wait for SMTP, so
-// response timing doesn't reveal which branch ran either.
+// Send the verification mail without waiting for SMTP.
 function sendVerification(email: string, token: string): void {
   if (!isEmailConfigured()) return;
   const template = verificationEmail(token);
@@ -106,54 +105,62 @@ router.post('/', [
       }
     }
 
-    const serviceIds = await visibleServiceIds(service_ids as string[]);
-
-    // Check for existing subscription with same email
-    const existing = await pool.query(
-      'SELECT id, verified, unsubscribed_at, verification_token FROM subscriptions WHERE email = $1',
-      [email]
-    );
-
-    if (existing.rows.length > 0) {
-      const sub = existing.rows[0];
-
-      if (sub.unsubscribed_at) {
-        // Previously unsubscribed — reactivate pending re-verification.
-        const newToken = crypto.randomBytes(32).toString('hex');
-        await pool.query(
-          `UPDATE subscriptions SET unsubscribed_at = NULL, verified = false, verification_token = $1 WHERE id = $2`,
-          [newToken, sub.id]
-        );
-        await setSubscriptionServices(sub.id, serviceIds);
-        sendVerification(email, newToken);
-      } else if (!sub.verified) {
-        // Active but unverified — resend verification.
-        sendVerification(email, sub.verification_token);
-      }
-      // Already active and verified: nothing to do.
-
-      return res.json(SUBSCRIBE_RESPONSE);
-    }
-
-    // New subscription
-    const token = crypto.randomBytes(32).toString('hex');
-
-    const result = await pool.query(`
-      INSERT INTO subscriptions (email, verification_token, verified)
-      VALUES ($1, $2, false)
-      RETURNING id
-    `, [email, token]);
-
-    await setSubscriptionServices(result.rows[0].id, serviceIds);
-    sendVerification(email, token);
-
+    // Answer before touching any subscription state: how much work follows
+    // depends on whether the address is already subscribed, so doing it first
+    // would let response timing reveal that.
     res.json(SUBSCRIBE_RESPONSE);
-
+    processSubscription(email, service_ids as string[]).catch((err) =>
+      console.error('Subscription processing error:', err)
+    );
   } catch (error) {
     console.error('Subscription error:', error);
     res.status(500).json({ error: 'Failed to create subscription' });
   }
 });
+
+// Create, reactivate, or re-send verification for a subscription. Runs after
+// the response has been sent (see POST /).
+async function processSubscription(email: string, requestedServiceIds: string[]): Promise<void> {
+  const serviceIds = await visibleServiceIds(requestedServiceIds);
+
+  // Check for existing subscription with same email
+  const existing = await pool.query(
+    'SELECT id, verified, unsubscribed_at, verification_token FROM subscriptions WHERE email = $1',
+    [email]
+  );
+
+  if (existing.rows.length > 0) {
+    const sub = existing.rows[0];
+
+    if (sub.unsubscribed_at) {
+      // Previously unsubscribed — reactivate pending re-verification.
+      const newToken = crypto.randomBytes(32).toString('hex');
+      await pool.query(
+        `UPDATE subscriptions SET unsubscribed_at = NULL, verified = false, verification_token = $1 WHERE id = $2`,
+        [newToken, sub.id]
+      );
+      await setSubscriptionServices(sub.id, serviceIds);
+      sendVerification(email, newToken);
+    } else if (!sub.verified) {
+      // Active but unverified — resend verification.
+      sendVerification(email, sub.verification_token);
+    }
+    // Already active and verified: nothing to do.
+    return;
+  }
+
+  // New subscription
+  const token = crypto.randomBytes(32).toString('hex');
+
+  const result = await pool.query(`
+    INSERT INTO subscriptions (email, verification_token, verified)
+    VALUES ($1, $2, false)
+    RETURNING id
+  `, [email, token]);
+
+  await setSubscriptionServices(result.rows[0].id, serviceIds);
+  sendVerification(email, token);
+}
 
 // GET /api/subscriptions/verify/:token - Verify subscription
 router.get('/verify/:token', async (req, res) => {
