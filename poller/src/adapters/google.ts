@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { endpointHttp } from '../lib/endpointHttp';
 
 /**
  * Adapter for Google Workspace Status Dashboard
@@ -39,7 +40,7 @@ export async function fetchStatus(endpoint: string): Promise<any> {
     // Fallback: probe the endpoint directly if provided
     if (endpoint && endpoint.startsWith('http')) {
       try {
-        const probe = await axios.get(endpoint, {
+        const probe = await endpointHttp.get(endpoint, {
           timeout: 10000,
           validateStatus: () => true,
           headers: { 'User-Agent': 'HE-Status-Poller/1.0' },

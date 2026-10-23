@@ -4,8 +4,24 @@ import { authMiddleware, AuthRequest, requireRole } from './middleware/auth';
 import { requireCsrf } from './middleware/csrf';
 import { buildStatusChangeCard, sendTeamsWebhook } from '../lib/teams';
 import { logAdminAction } from '../lib/adminLog';
+import { assertEndpointAllowed } from '@he-status/shared';
 
 const router = Router();
+
+// Webhook URLs must be https and resolve only to public addresses. Delivery
+// re-checks this at connect time (shared/src/teams.ts); this rejects bad URLs
+// when they are saved. Returns an error message, or null if the URL is OK.
+async function webhookUrlProblem(webhookUrl: unknown): Promise<string | null> {
+  if (typeof webhookUrl !== 'string' || !webhookUrl.startsWith('https://')) {
+    return 'Webhook URL must start with https://';
+  }
+  try {
+    await assertEndpointAllowed(webhookUrl, { allowPrivate: false });
+    return null;
+  } catch (err: any) {
+    return err.message;
+  }
+}
 
 // All routes require super_admin
 router.use(authMiddleware, requireCsrf, requireRole('super_admin'));
@@ -32,8 +48,9 @@ router.post('/', async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'Name and webhook_url are required' });
     }
 
-    if (!webhook_url.startsWith('https://')) {
-      return res.status(400).json({ error: 'Webhook URL must start with https://' });
+    const problem = await webhookUrlProblem(webhook_url);
+    if (problem) {
+      return res.status(400).json({ error: problem });
     }
 
     const result = await pool.query(
@@ -59,8 +76,11 @@ router.put('/:id', async (req: AuthRequest, res) => {
     const { id } = req.params;
     const { name, webhook_url, enabled, category_filter } = req.body;
 
-    if (webhook_url && !webhook_url.startsWith('https://')) {
-      return res.status(400).json({ error: 'Webhook URL must start with https://' });
+    if (webhook_url !== undefined) {
+      const problem = await webhookUrlProblem(webhook_url);
+      if (problem) {
+        return res.status(400).json({ error: problem });
+      }
     }
 
     const sets: string[] = ['updated_at = NOW()'];

@@ -1,5 +1,10 @@
-import axios from 'axios';
 import { STATUS_COLORS, STATUS_ICONS, STATUS_LABELS } from './constants';
+import { createGuardedHttpClient } from './urlGuard';
+
+// Teams / Power Automate webhooks are public HTTPS endpoints that never
+// redirect, so delivery is held to the strictest policy: public addresses only
+// (checked at connect time) and no redirects.
+const webhookHttp = createGuardedHttpClient({ allowPrivate: false, maxRedirects: 0 });
 
 export interface QueryExecutor {
   query(text: string, params?: any[]): Promise<{ rows: any[] }>;
@@ -124,12 +129,15 @@ export async function sendTeamsWebhook(
 ): Promise<{ success: boolean; error?: string; responseTimeMs: number }> {
   const start = Date.now();
   try {
-    await axios.post(webhookUrl, payload, { timeout: 10000 });
+    if (!webhookUrl.startsWith('https://')) {
+      throw new Error('Webhook URL must use https://');
+    }
+    await webhookHttp.post(webhookUrl, payload, { timeout: 10000 });
     return { success: true, responseTimeMs: Date.now() - start };
   } catch (err: any) {
-    const message = err.response
-      ? `HTTP ${err.response.status}: ${JSON.stringify(err.response.data).slice(0, 200)}`
-      : err.message;
+    // Only the status code: the target's response body is never echoed back
+    // to the admin API or stored in teams_webhook_logs.
+    const message = err.response ? `HTTP ${err.response.status}` : err.message;
     return { success: false, error: message, responseTimeMs: Date.now() - start };
   }
 }

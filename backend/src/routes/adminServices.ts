@@ -4,8 +4,28 @@ import { authMiddleware, requireRole, AuthRequest } from './middleware/auth';
 import { requireCsrf } from './middleware/csrf';
 import { listDevices, listGroups, listServicesForDevice } from '../lib/librenms';
 import { logAdminAction } from '../lib/adminLog';
+import { assertEndpointAllowed, libreNmsSegment, parseLibreNmsEndpoint } from '@he-status/shared';
 
 const router = Router();
+
+// Reject, at save time, endpoints the poller would refuse to fetch: LibreNMS
+// endpoints with unsafe identifiers, and URLs resolving to blocked addresses.
+// (The poller enforces the same rules again at connect time.) Returns an error
+// message, or null if the endpoint is acceptable.
+async function endpointProblem(type: unknown, endpoint: unknown): Promise<string | null> {
+  if (endpoint === undefined || endpoint === null || endpoint === '') return null;
+  if (typeof endpoint !== 'string') return 'status_api_endpoint must be a string';
+  try {
+    if (type === 'librenms') {
+      parseLibreNmsEndpoint(endpoint);
+    } else {
+      await assertEndpointAllowed(endpoint);
+    }
+    return null;
+  } catch (err: any) {
+    return err.message;
+  }
+}
 
 // GET /api/admin/services - List all services with full config
 router.get('/', authMiddleware, requireCsrf, async (req: AuthRequest, res: Response) => {
@@ -44,6 +64,11 @@ router.post('/', authMiddleware, requireCsrf, requireRole('super_admin'), async 
 
     if (!name || !status_api_type) {
       return res.status(400).json({ error: 'name and status_api_type are required' });
+    }
+
+    const problem = await endpointProblem(status_api_type, status_api_endpoint);
+    if (problem) {
+      return res.status(400).json({ error: problem });
     }
 
     await client.query('BEGIN');
@@ -106,6 +131,20 @@ router.put('/:id', authMiddleware, requireCsrf, requireRole('super_admin'), asyn
       status_api_endpoint, status_api_type,
       check_enabled, external_link, display_order, visible
     } = req.body;
+
+    if (status_api_endpoint || status_api_type) {
+      const current = await pool.query(
+        'SELECT status_api_endpoint, status_api_type FROM services WHERE id = $1',
+        [id]
+      );
+      const problem = await endpointProblem(
+        status_api_type ?? current.rows[0]?.status_api_type,
+        status_api_endpoint ?? current.rows[0]?.status_api_endpoint
+      );
+      if (problem) {
+        return res.status(400).json({ error: problem });
+      }
+    }
 
     // Get category slug for backwards compat
     let categorySlug = undefined;
@@ -195,6 +234,11 @@ router.get('/librenms/groups', authMiddleware, requireCsrf, requireRole('super_a
 
 // GET /api/admin/librenms/services/:hostname
 router.get('/librenms/services/:hostname', authMiddleware, requireCsrf, requireRole('super_admin'), async (req: AuthRequest, res: Response) => {
+  try {
+    libreNmsSegment(req.params.hostname);
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
+  }
   try {
     const services = await listServicesForDevice(req.params.hostname);
     res.json({ services });

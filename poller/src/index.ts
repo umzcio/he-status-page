@@ -12,7 +12,7 @@ import { queueNotifications, notifyDependents } from './lib/notificationQueue';
 import { createHealthServer } from './lib/healthServer';
 import { runDataRetentionIfDue } from './lib/retention';
 import { autoCreateIncident, autoResolveIncident } from './lib/incidents';
-import { assertEndpointAllowed } from './lib/urlGuard';
+import { assertEndpointAllowed } from '@he-status/shared';
 import logger from './lib/logger';
 
 dotenv.config({ path: path.join(__dirname, '../../.env') });

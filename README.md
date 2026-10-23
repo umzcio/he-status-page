@@ -186,6 +186,12 @@ are unaffected (they are not CSRF-able and skip the CSRF check).
 | `POLLER_ENABLED`          | Set `false` to disable polling       | `true`  |
 | `POLLER_ALLOW_PRIVATE_ENDPOINTS` | Allow endpoints resolving to private/loopback/link-local addresses (cloud metadata always blocked) | `false` |
 
+Admin-configured status endpoints are checked against this address policy when a
+service is saved and again on every connection the poller makes, including each
+redirect hop, so DNS rebinding or a redirect to an internal host can't get around
+it. Teams webhook URLs follow a stricter rule regardless of this setting: they must
+be `https://` URLs on public addresses, and redirects are not followed.
+
 ### Branding (rebrand in one place)
 
 | Variable                    | Description                                                    | Default             |

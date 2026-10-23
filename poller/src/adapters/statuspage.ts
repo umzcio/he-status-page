@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { endpointHttp } from '../lib/endpointHttp';
 
 /**
  * Adapter for Statuspage.io format
@@ -14,7 +14,7 @@ interface StatusPageResponse {
 
 export async function fetchStatus(endpoint: string): Promise<StatusPageResponse> {
   try {
-    const response = await axios.get(endpoint, {
+    const response = await endpointHttp.get(endpoint, {
       timeout: 10000,
       headers: {
         'User-Agent': 'HE-Status-Poller/1.0'

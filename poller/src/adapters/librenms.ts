@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { libreNmsSegment, parseLibreNmsEndpoint } from '@he-status/shared';
 
 /**
  * Adapter for LibreNMS API
@@ -103,20 +104,8 @@ async function apiGet<T>(path: string): Promise<T> {
   return response.data;
 }
 
-function parseEndpoint(endpoint: string): { mode: string; target: string; subtype?: string } {
-  const parts = endpoint.split(':');
-  if (parts.length < 2) {
-    throw new Error(`Invalid LibreNMS endpoint format: "${endpoint}". Expected device:<host>, service:<host>[:<type>], or group:<name>`);
-  }
-  return {
-    mode: parts[0],
-    target: parts[1],
-    subtype: parts[2],
-  };
-}
-
 async function fetchDevice(hostname: string): Promise<FetchResult> {
-  const deviceData = await apiGet<{ devices: LibreNMSDevice[] }>(`/api/v0/devices/${hostname}`);
+  const deviceData = await apiGet<{ devices: LibreNMSDevice[] }>(`/api/v0/devices/${libreNmsSegment(hostname)}`);
   const device = deviceData.devices?.[0];
 
   if (!device) {
@@ -126,7 +115,7 @@ async function fetchDevice(hostname: string): Promise<FetchResult> {
   // Check maintenance status
   let maintenance = false;
   try {
-    const maint = await apiGet<{ is_under_maintenance: boolean }>(`/api/v0/devices/${hostname}/maintenance`);
+    const maint = await apiGet<{ is_under_maintenance: boolean }>(`/api/v0/devices/${libreNmsSegment(hostname)}/maintenance`);
     maintenance = maint.is_under_maintenance === true;
   } catch {
     // Maintenance endpoint may not be available — not critical
@@ -145,7 +134,7 @@ async function fetchDevice(hostname: string): Promise<FetchResult> {
 }
 
 async function fetchServices(hostname: string, serviceType?: string): Promise<FetchResult> {
-  let path = `/api/v0/services/${hostname}`;
+  let path = `/api/v0/services/${libreNmsSegment(hostname)}`;
   if (serviceType) {
     path += `?type=${encodeURIComponent(serviceType)}`;
   }
@@ -176,7 +165,7 @@ async function fetchServices(hostname: string, serviceType?: string): Promise<Fe
 async function fetchGroup(groupName: string): Promise<FetchResult> {
   // Get device IDs in the group
   const groupData = await apiGet<{ devices: { device_id: number }[] }>(
-    `/api/v0/devicegroups/${encodeURIComponent(groupName)}`
+    `/api/v0/devicegroups/${libreNmsSegment(groupName)}`
   );
 
   const deviceIds = (groupData.devices || []).map(d => d.device_id);
@@ -202,7 +191,7 @@ async function fetchGroup(groupName: string): Promise<FetchResult> {
 }
 
 export async function fetchStatus(endpoint: string): Promise<FetchResult> {
-  const { mode, target, subtype } = parseEndpoint(endpoint);
+  const { mode, target, subtype } = parseLibreNmsEndpoint(endpoint);
 
   switch (mode) {
     case 'device':

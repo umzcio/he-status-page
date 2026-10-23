@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { endpointHttp } from '../lib/endpointHttp';
 
 /**
  * Adapter for Ellucian Banner Managed Cloud services
@@ -22,7 +22,7 @@ export async function fetchStatus(endpoint: string): Promise<EllucianResponse> {
   const isActuator = endpoint.includes('/actuator/health');
 
   try {
-    const response = await axios.get(endpoint, {
+    const response = await endpointHttp.get(endpoint, {
       timeout: 15000,
       maxRedirects: 3,
       validateStatus: () => true, // Don't throw on any HTTP status

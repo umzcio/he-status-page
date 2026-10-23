@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { libreNmsSegment } from '@he-status/shared';
 
 const LIBRENMS_URL = () => (process.env.LIBRENMS_URL || '').replace(/\/+$/, '');
 const LIBRENMS_TOKEN = () => process.env.LIBRENMS_API_TOKEN || '';
@@ -59,7 +60,7 @@ export async function listGroups(): Promise<any[]> {
 }
 
 export async function listServicesForDevice(hostname: string): Promise<any[]> {
-  const data = await apiGet<{ services: any }>(`/api/v0/services/${hostname}`);
+  const data = await apiGet<{ services: any }>(`/api/v0/services/${libreNmsSegment(hostname)}`);
   let services = data.services || [];
   if (Array.isArray(services) && services.length > 0 && Array.isArray(services[0])) {
     services = services.flat();
