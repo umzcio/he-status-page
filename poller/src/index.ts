@@ -5,6 +5,7 @@ import pool from './db/connection';
 import { getAdapter } from './adapters';
 import { notifyTeams } from './lib/teams';
 import { resilientFetch } from './lib/resilience';
+import { publicFetchFailureMessage } from './lib/fetchErrors';
 import { getCurrentStatus, updateServiceStatus, updateLastChecked, logPollerCheck } from './lib/statusUpdater';
 import { checkExpiredOverrides } from './lib/overrideManager';
 import { activateDueMaintenances, completeExpiredMaintenances, completeMissedMaintenances } from './lib/maintenanceManager';
@@ -76,6 +77,7 @@ async function checkServiceStatus(service: Service): Promise<void> {
 
     let statusData: any = null;
     let normalizedStatus: { status: string; message: string };
+    let fetchError: Error | null = null;
 
     try {
       // Fetch status from external API with retry + circuit breaker
@@ -97,8 +99,12 @@ async function checkServiceStatus(service: Service): Promise<void> {
       // tripped the circuit breaker — a sustained failure to reach the
       // upstream service. Classify it as an outage instead of silently
       // leaving the last known status in place.
+      // The raw error can name the endpoint, hosts and addresses: it goes to
+      // the structured log and poller_logs only. The public status, history
+      // and incident text get a fixed message (lib/fetchErrors.ts).
       log.warn({ err: fetchErr }, 'Fetch failed after retries/circuit breaker — classifying as outage');
-      normalizedStatus = { status: 'outage', message: `Service unreachable: ${fetchErr.message}` };
+      fetchError = fetchErr;
+      normalizedStatus = { status: 'outage', message: publicFetchFailureMessage(fetchErr) };
     }
 
     // Check if status changed
@@ -149,14 +155,15 @@ async function checkServiceStatus(service: Service): Promise<void> {
       await updateLastChecked(service.id);
     }
 
-    // Log successful check
+    // Log the check (a failed fetch is recorded with its full error message)
     await logPollerCheck({
       service_id: service.id,
       check_started_at: new Date(startTime),
       check_completed_at: new Date(),
-      success: true,
+      success: fetchError === null,
       status_detected: normalizedStatus.status,
       raw_response: statusData,
+      error_message: fetchError?.message,
       response_time_ms: Date.now() - startTime
     });
 

@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { libreNmsSegment, parseLibreNmsEndpoint } from '@he-status/shared';
+import { UpstreamError } from '../lib/fetchErrors';
 
 /**
  * Adapter for LibreNMS API
@@ -93,15 +94,24 @@ async function apiGet<T>(path: string): Promise<T> {
     throw new Error('LibreNMS credentials not configured (LIBRENMS_URL / LIBRENMS_API_TOKEN)');
   }
 
-  const response = await axios.get(`${baseUrl}${path}`, {
-    timeout: 15000,
-    headers: {
-      'X-Auth-Token': token,
-      'User-Agent': 'HE-Status-Poller/1.0',
-    },
-  });
-
-  return response.data;
+  try {
+    const response = await axios.get(`${baseUrl}${path}`, {
+      timeout: 15000,
+      headers: {
+        'X-Auth-Token': token,
+        'User-Agent': 'HE-Status-Poller/1.0',
+      },
+    });
+    return response.data;
+  } catch (err: any) {
+    // Never let the AxiosError escape: its config carries the X-Auth-Token
+    // header, and its message can name the LibreNMS host.
+    const status = err?.response?.status;
+    throw new UpstreamError(
+      status ? `LibreNMS API returned HTTP ${status}` : `LibreNMS API request failed (${err?.code || 'network error'})`,
+      { status, code: err?.code }
+    );
+  }
 }
 
 async function fetchDevice(hostname: string): Promise<FetchResult> {
@@ -109,7 +119,7 @@ async function fetchDevice(hostname: string): Promise<FetchResult> {
   const device = deviceData.devices?.[0];
 
   if (!device) {
-    throw new Error(`Device "${hostname}" not found in LibreNMS`);
+    throw new Error('Device not found in LibreNMS');
   }
 
   // Check maintenance status

@@ -60,7 +60,7 @@ export async function fetchStatus(endpoint: string): Promise<any> {
       }
     }
 
-    throw new Error(`Failed to fetch Google status: ${error.message}`);
+    throw new Error(`Failed to fetch Google status: ${error.message}`, { cause: error });
   }
 }
 
@@ -76,7 +76,7 @@ export function normalizeStatus(data: any): { status: string; message: string } 
     if (data.status_code >= 400) {
       return { status: 'degraded', message: `Service returned HTTP ${data.status_code}` };
     }
-    return { status: 'outage', message: data.error || 'Service unreachable' };
+    return { status: 'outage', message: 'Service unreachable' };
   }
 
   // Google status feed

@@ -22,7 +22,7 @@ export async function fetchStatus(endpoint: string): Promise<StatusPageResponse>
     });
     return response.data;
   } catch (error: any) {
-    throw new Error(`Failed to fetch status from ${endpoint}: ${error.message}`);
+    throw new Error(`Failed to fetch status: ${error.message}`, { cause: error });
   }
 }
 

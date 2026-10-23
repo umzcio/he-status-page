@@ -1,4 +1,5 @@
 import pino from 'pino';
+import { serializeError } from '@he-status/shared';
 
 function getPrettyTransport(): pino.TransportSingleOptions | undefined {
   if (process.env.NODE_ENV === 'production') return undefined;
@@ -14,6 +15,9 @@ const logger = pino({
   level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
   transport: getPrettyTransport(),
   name: 'he-status-poller',
+  // Never serialize whole error objects: HTTP client errors carry request
+  // headers (API tokens). See shared/src/errors.ts.
+  serializers: { err: serializeError, error: serializeError },
 });
 
 export default logger;

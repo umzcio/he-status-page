@@ -47,7 +47,7 @@ export async function fetchStatus(endpoint: string): Promise<EllucianResponse> {
     // Network-level errors (DNS, connection refused, timeout) — throw so the
     // caller's retry/circuit-breaker (resilientFetch) can retry before giving up,
     // instead of silently treating the failure as a successful fetch.
-    throw new Error(`Failed to fetch Ellucian status from ${endpoint}: ${error.code || error.message || 'Unknown error'}`);
+    throw new Error(`Failed to fetch Ellucian status: ${error.code || error.message || 'Unknown error'}`, { cause: error });
   }
 }
 

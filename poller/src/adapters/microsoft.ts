@@ -54,7 +54,7 @@ async function getAccessToken(): Promise<string> {
 
     return cachedToken;
   } catch (error: any) {
-    throw new Error(`Failed to get Microsoft access token: ${error.message}`);
+    throw new Error(`Failed to get Microsoft access token: ${error.message}`, { cause: error });
   }
 }
 
@@ -84,7 +84,7 @@ export async function fetchStatus(endpoint: string): Promise<any> {
         }]
       };
     }
-    throw new Error(`Failed to fetch Microsoft status: ${error.message}`);
+    throw new Error(`Failed to fetch Microsoft status: ${error.message}`, { cause: error });
   }
 }
 
