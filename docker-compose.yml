@@ -51,11 +51,15 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-hestatus}:${POSTGRES_PASSWORD}@hestatus-db:5432/${POSTGRES_DB:-hestatus}
-      # Listen on the container network. The port is not published, so only a
-      # reverse proxy attached to hestatus-network can reach it; trust X-Forwarded-For
-      # from private (container) addresses only.
+      # Listen on the container network; the port is not published, so only a
+      # reverse proxy attached to hestatus-network can reach it. TRUST_PROXY must
+      # name that proxy's own address (see README, "Docker Compose"): trusting a
+      # whole private range would let any client with a private address forge
+      # X-Forwarded-For and dodge rate limits.
       HOST: 0.0.0.0
-      TRUST_PROXY: ${TRUST_PROXY:-loopback,uniquelocal}
+      # The backend refuses to start until TRUST_PROXY is set.
+      TRUST_PROXY: ${TRUST_PROXY:-}
+      REQUIRE_TRUST_PROXY: "true"
     depends_on:
       hestatus-db:
         condition: service_healthy

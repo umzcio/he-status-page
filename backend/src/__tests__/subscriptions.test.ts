@@ -98,12 +98,21 @@ describe('public subscriptions', () => {
 
   it('enrols a default subscription in visible services only', async () => {
     await subscribe({ email: 'someone@example.edu' });
-    expect(inserted).toEqual([['new-sub', VISIBLE]]);
+    await vi.waitFor(() => expect(inserted).toEqual([['new-sub', VISIBLE]]));
   });
 
   it('drops hidden service ids from an explicit list', async () => {
     await subscribe({ email: 'someone@example.edu', service_ids: [VISIBLE, HIDDEN] });
-    expect(inserted).toEqual([['new-sub', VISIBLE]]);
+    await vi.waitFor(() => expect(inserted).toEqual([['new-sub', VISIBLE]]));
+  });
+
+  it('answers before doing any state-dependent database work', async () => {
+    // If the response waited on the subscription lookup or writes, a stalled
+    // database would stall the response; timing would then vary by state.
+    query.mockImplementation(() => new Promise(() => {}));
+    const res = await subscribe({ email: 'someone@example.edu' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ success: true });
   });
 
   it('rejects service ids that are not UUIDs', async () => {

@@ -50,7 +50,8 @@ router.get('/', async (req, res) => {
         (
           SELECT json_agg(json_build_object('name', dep_s.name, 'status', dep_ss.status))
           FROM service_dependencies sd
-          JOIN services dep_s ON sd.depends_on_service_id = dep_s.id
+          -- Hidden dependencies are never named publicly.
+          JOIN services dep_s ON sd.depends_on_service_id = dep_s.id AND dep_s.visible IS NOT false
           JOIN service_status dep_ss ON dep_s.id = dep_ss.service_id
           WHERE sd.service_id = s.id AND dep_ss.status NOT IN ('operational')
         ) AS affected_by,

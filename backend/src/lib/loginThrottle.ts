@@ -1,58 +1,29 @@
-import type { Request, Response } from 'express';
-import jwt from 'jsonwebtoken';
+import type { Options } from 'express-rate-limit';
 import rateLimit from 'express-rate-limit';
-import { JWT_SECRET } from './config';
-import { sessionCookieOptions } from './authCookies';
 import { PgRateLimitStore } from './pgRateLimitStore';
+import { clientKey } from './clientKey';
 
 // Per-account throttling for POST /api/admin/login.
 //
-// The per-IP authLimiter in index.ts caps how fast one client can try, but on
-// its own it puts no ceiling on guesses against a single account from many
-// addresses. Two further limiters count FAILED attempts only (successful
-// logins are refunded):
+// The per-IP authLimiter in index.ts caps how fast one client can try. On top
+// of it:
 //
-//  - accountClientLimiter: failures per (account, client IP).
-//  - accountLimiter: failures per account, from any address. To stop an
-//    attacker from using this to lock the real admin out, a browser that has
-//    signed in to the account before carries a "device" cookie for it and is
-//    exempt from this limiter (it still counts against the other two).
+//  - accountClientLimiter: hard cap on FAILED attempts per (account, client).
+//    One client hammering one account is blocked; the owner logging in from
+//    anywhere else is not.
+//  - a per-account delay: once an account has had ACCOUNT_DELAY_THRESHOLD
+//    failures in the window (from any address), every further attempt for it
+//    waits before the password is checked, doubling up to MAX_ACCOUNT_DELAY_MS.
+//    This slows distributed guessing without ever refusing the owner: a correct
+//    password still signs in, just more slowly. (A hard per-account cap would
+//    let anyone lock an admin out by failing on purpose.)
 
 const WINDOW_MS = 15 * 60 * 1000;
-const DEVICE_TOKEN_TTL = '365d';
-export const DEVICE_COOKIE = 'hsp_device';
+export const ACCOUNT_DELAY_THRESHOLD = 10;
+export const MAX_ACCOUNT_DELAY_MS = 10_000;
 
 export function normalizeLoginEmail(email: unknown): string {
   return typeof email === 'string' ? email.trim().toLowerCase() : '';
-}
-
-export function issueDeviceToken(email: string): string {
-  return jwt.sign({ typ: 'login_device', email: normalizeLoginEmail(email) }, JWT_SECRET, {
-    expiresIn: DEVICE_TOKEN_TTL,
-  });
-}
-
-export function deviceTokenMatches(token: unknown, email: unknown): boolean {
-  const normalized = normalizeLoginEmail(email);
-  if (typeof token !== 'string' || !normalized) return false;
-  try {
-    const claims = jwt.verify(token, JWT_SECRET) as { typ?: string; email?: string };
-    return claims.typ === 'login_device' && claims.email === normalized;
-  } catch {
-    return false;
-  }
-}
-
-// Called after a successful password login.
-export function setDeviceCookie(res: Response, email: string): void {
-  res.cookie(DEVICE_COOKIE, issueDeviceToken(email), {
-    ...sessionCookieOptions(),
-    maxAge: 365 * 24 * 60 * 60 * 1000,
-  });
-}
-
-function loginEmail(req: Request): string {
-  return normalizeLoginEmail(req.body?.email);
 }
 
 export const accountClientLimiter = rateLimit({
@@ -61,19 +32,34 @@ export const accountClientLimiter = rateLimit({
   skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => `${loginEmail(req)}|${req.ip}`,
+  keyGenerator: (req) => `${normalizeLoginEmail(req.body?.email)}|${clientKey(req.ip)}`,
   message: { error: 'Too many login attempts, please try again later' },
   store: new PgRateLimitStore('login_acct_ip'),
 });
 
-export const accountLimiter = rateLimit({
-  windowMs: WINDOW_MS,
-  max: 10,
-  skipSuccessfulRequests: true,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => loginEmail(req),
-  skip: (req) => deviceTokenMatches(req.cookies?.[DEVICE_COOKIE], req.body?.email),
-  message: { error: 'Too many login attempts, please try again later' },
-  store: new PgRateLimitStore('login_acct'),
-});
+const accountFailureStore = new PgRateLimitStore('login_acct');
+accountFailureStore.init({ windowMs: WINDOW_MS } as Options);
+
+export function accountDelayMs(failures: number): number {
+  if (failures < ACCOUNT_DELAY_THRESHOLD) return 0;
+  return Math.min(1000 * 2 ** (failures - ACCOUNT_DELAY_THRESHOLD), MAX_ACCOUNT_DELAY_MS);
+}
+
+// Indirection so tests can observe/skip the wait.
+export const timing = {
+  sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+};
+
+/** Wait out the account's current delay, if any. Call before checking the password. */
+export async function applyAccountDelay(email: string): Promise<void> {
+  const key = normalizeLoginEmail(email);
+  if (!key) return;
+  const current = await accountFailureStore.get(key);
+  const delay = accountDelayMs(current?.totalHits ?? 0);
+  if (delay > 0) await timing.sleep(delay);
+}
+
+export async function recordAccountFailure(email: string): Promise<void> {
+  const key = normalizeLoginEmail(email);
+  if (key) await accountFailureStore.increment(key);
+}

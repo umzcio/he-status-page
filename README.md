@@ -332,7 +332,8 @@ the protection. SP metadata is served at `${PUBLIC_URL}/api/admin/saml/metadata`
 
 ```bash
 cp .env.example .env
-# Edit .env — at minimum set POSTGRES_PASSWORD, JWT_SECRET, ADMIN_PASSWORD.
+# Edit .env — at minimum set POSTGRES_PASSWORD, JWT_SECRET, ADMIN_PASSWORD,
+# and TRUST_PROXY (your reverse proxy's address; see below).
 docker compose up -d --build
 # Migrations run automatically (hestatus-migrate) before backend/poller start.
 
@@ -345,6 +346,24 @@ Notes:
 - The backend and poller receive `DATABASE_URL` automatically, built from `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` and pointed at the `hestatus-db` service. `POSTGRES_PASSWORD` is required — Compose fails fast if it is unset.
 - `NEXT_PUBLIC_*` values are passed as **build args** to the frontend image, so they are baked in at image build time. Change any of them → rebuild the frontend (`docker compose up -d --build hestatus-frontend`).
 - The backend and frontend containers only `expose` port 3000 on the internal network; put a reverse proxy in front for TLS and public access.
+- **`TRUST_PROXY` is required.** The backend container refuses to start until it is set. Set it to the IP address of your reverse proxy container on `hestatus-network`, and nothing broader. Trusting a whole private range (`uniquelocal`) would let any client with a private address forge `X-Forwarded-For` and get around rate limits. To give the proxy a fixed address, pin the network's subnet in a `docker-compose.override.yml`:
+
+  ```yaml
+  services:
+    proxy:
+      image: nginx:1.27
+      ports: ["80:80", "443:443"]
+      networks:
+        hestatus-network:
+          ipv4_address: 172.28.0.10
+  networks:
+    hestatus-network:
+      ipam:
+        config:
+          - subnet: 172.28.0.0/24
+  ```
+
+  Then set `TRUST_PROXY=172.28.0.10` in `.env`. If the network already exists, run `docker compose down` first so it is recreated with the subnet.
 
 ### Bare metal (systemd)
 

@@ -28,6 +28,17 @@ describe('backend/src/lib/trustProxy', () => {
     expect(all.warnings).toHaveLength(1);
   });
 
+  it('refuses to fall back to the default when the deployment requires an explicit proxy', () => {
+    expect(() => resolveTrustProxy({ REQUIRE_TRUST_PROXY: 'true' })).toThrow(/TRUST_PROXY must be set/);
+    expect(resolveTrustProxy({ REQUIRE_TRUST_PROXY: 'true', TRUST_PROXY: '172.28.0.10' }).value).toEqual(['172.28.0.10']);
+  });
+
+  it('warns when a whole private range is trusted', () => {
+    const { value, warnings } = resolveTrustProxy({ TRUST_PROXY: 'loopback,uniquelocal' });
+    expect(value).toEqual(['loopback', 'uniquelocal']);
+    expect(warnings[0]).toMatch(/uniquelocal: every address in that range is trusted/);
+  });
+
   it('ignores the legacy TRUST_PROXY_HOPS with a warning', () => {
     const { value, warnings } = resolveTrustProxy({ TRUST_PROXY_HOPS: '1' });
     expect(value).toEqual(['loopback']);

@@ -27,7 +27,8 @@ import adminMaintenanceRoutes from './routes/adminMaintenance';
 import { startNotificationProcessor, stopNotificationProcessor } from './lib/notifications';
 import { PgRateLimitStore } from './lib/pgRateLimitStore';
 import { resolveTrustProxy } from './lib/trustProxy';
-import { accountClientLimiter, accountLimiter } from './lib/loginThrottle';
+import { accountClientLimiter } from './lib/loginThrottle';
+import { clientKey } from './lib/clientKey';
 import logger from './lib/logger';
 
 dotenv.config({ path: path.join(__dirname, '../../.env') });
@@ -50,7 +51,8 @@ app.set('trust proxy', trustProxy.value);
 // API. Containers and split-host deployments set HOST=0.0.0.0 explicitly.
 const HOST = process.env.HOST || '127.0.0.1';
 
-// Rate limiters (PostgreSQL-backed store persists across restarts)
+// Rate limiters (PostgreSQL-backed store persists across restarts). Keyed by
+// clientKey(), which groups an IPv6 client's /64 into one bucket.
 // publicLimiter can be disabled when a load balancer/upstream proxy already
 // rate limits these endpoints, to avoid redundant limiting.
 const publicLimiterEnabled = process.env.RATE_LIMIT_PUBLIC_ENABLED !== 'false';
@@ -60,6 +62,7 @@ const publicLimiter: express.RequestHandler = publicLimiterEnabled
       max: 60,
       standardHeaders: true,
       legacyHeaders: false,
+      keyGenerator: (req) => clientKey(req.ip),
       message: { error: 'Too many requests, please try again later' },
       store: new PgRateLimitStore('public'),
     })
@@ -70,6 +73,7 @@ const authLimiter = rateLimit({
   max: 15,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => clientKey(req.ip),
   message: { error: 'Too many login attempts, please try again later' },
   store: new PgRateLimitStore('auth'),
 });
@@ -79,6 +83,7 @@ const subscriptionLimiter = rateLimit({
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => clientKey(req.ip),
   message: { error: 'Too many subscription attempts, please try again later' },
   store: new PgRateLimitStore('sub'),
 });
@@ -122,7 +127,7 @@ app.use('/api/services', publicLimiter, servicesRoutes);
 app.use('/api/incidents', publicLimiter, incidentsRoutes);
 app.use('/api/admin/incidents', adminIncidentsRoutes);
 app.use('/api/admin/maintenance', adminMaintenanceRoutes);
-app.use('/api/admin/login', authLimiter, accountClientLimiter, accountLimiter);
+app.use('/api/admin/login', authLimiter, accountClientLimiter);
 app.use('/api/admin/cas', authLimiter);
 app.use('/api/admin/oidc', authLimiter);
 app.use('/api/admin/saml', authLimiter);
