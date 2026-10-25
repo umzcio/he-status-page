@@ -6,9 +6,36 @@ interface IncrementResponse {
   resetTime: Date | undefined;
 }
 
+// Every store shares one rate_limits table, created on first use. One shared
+// promise means concurrent first requests issue a single CREATE; if another
+// process wins the race, Postgres reports a duplicate (23505 on the type,
+// 42P07 on the relation), which just means the table now exists.
+let tableReady: Promise<void> | null = null;
+
+function ensureRateLimitTable(): Promise<void> {
+  if (!tableReady) {
+    tableReady = pool
+      .query(`
+        CREATE TABLE IF NOT EXISTS rate_limits (
+          key VARCHAR(255) PRIMARY KEY,
+          hits INTEGER NOT NULL DEFAULT 0,
+          reset_at TIMESTAMPTZ NOT NULL
+        )
+      `)
+      .then(
+        () => undefined,
+        (err: any) => {
+          if (err?.code === '23505' || err?.code === '42P07') return;
+          tableReady = null; // let the next request try again
+          throw err;
+        }
+      );
+  }
+  return tableReady;
+}
+
 export class PgRateLimitStore {
   _prefix: string;
-  _initialized = false;
   _windowMs = 15 * 60 * 1000;
 
   constructor(prefix: string) {
@@ -20,15 +47,7 @@ export class PgRateLimitStore {
   }
 
   private async ensureTable(): Promise<void> {
-    if (this._initialized) return;
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS rate_limits (
-        key VARCHAR(255) PRIMARY KEY,
-        hits INTEGER NOT NULL DEFAULT 0,
-        reset_at TIMESTAMPTZ NOT NULL
-      )
-    `);
-    this._initialized = true;
+    await ensureRateLimitTable();
   }
 
   private prefixedKey(key: string): string {

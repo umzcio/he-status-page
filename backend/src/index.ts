@@ -47,6 +47,14 @@ const trustProxy = resolveTrustProxy();
 trustProxy.warnings.forEach((w) => logger.warn(w));
 app.set('trust proxy', trustProxy.value);
 
+if (process.env.PASSWORD_LOGIN_ENABLED === 'true' && !process.env.TURNSTILE_SECRET_KEY) {
+  logger.warn(
+    'Password login is enabled without Turnstile: once an account\'s password-check budget is spent ' +
+      '(e.g. by an attacker), its owner can only sign in by SSO until the window resets. ' +
+      'Set TURNSTILE_SECRET_KEY to let owners through with a CAPTCHA.'
+  );
+}
+
 // Bind to loopback by default so only a same-host reverse proxy can reach the
 // API. Containers and split-host deployments set HOST=0.0.0.0 explicitly.
 const HOST = process.env.HOST || '127.0.0.1';

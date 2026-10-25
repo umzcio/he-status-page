@@ -9,17 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-Fixes for 24 findings from two Claude Security scans.
+Fixes for 26 findings from three Claude Security scans.
 
 - **Admin login and sessions.** The backend now binds to `127.0.0.1` by
   default (`HOST`) and trusts `X-Forwarded-For` only from listed proxy
   addresses (`TRUST_PROXY`, default `loopback`), so clients can't spoof their
   IP to dodge rate limits. Rate limits group each IPv6 client's /64 into one
-  bucket. Failed logins are capped per account and client, and an account
-  under attack from many addresses gets a growing delay (up to 10 s) on every
-  attempt. That delay never refuses the correct password, so no one can lock
-  an admin out. Every failed login costs the same bcrypt work, so response
-  timing doesn't reveal which emails have accounts.
+  bucket. Password login (`POST /api/admin/login`) is now **off by default**
+  (`PASSWORD_LOGIN_ENABLED`); the admin UI signs in with SSO only. When
+  enabled, each account gets 10 password checks per 15 minutes however many
+  addresses are guessing, and past that a request needs a solved Turnstile
+  CAPTCHA. Every failed login costs the same bcrypt work, so response timing
+  doesn't reveal which emails have accounts.
 - **Session revocation.** Logout revokes the session server-side. Password
   resets and the new "Sign out everywhere" action end all of a user's sessions.
   Users with audit history can now be deleted.
@@ -44,7 +45,10 @@ Fixes for 24 findings from two Claude Security scans.
   address's state, so response timing doesn't reveal it either.
 - **Poller resilience.** Every fetch has a 30 s wall-clock deadline and every
   service check a 3 min deadline, so a slowly trickled response can't stall
-  polling. The health check reports a stuck cycle.
+  polling. A check that hits its deadline is cancelled (its requests aborted,
+  nothing written), only one check per service runs at a time, a LibreNMS
+  group check is one request however large the group, and the health check
+  reports a stuck cycle.
 - **Hidden services** are no longer named in other services' "affected by"
   dependency notes.
 - **Untrusted provider data.** Response sizes are capped, stored poller
@@ -60,6 +64,8 @@ Fixes for 24 findings from two Claude Security scans.
   docker-compose sets `HOST` for you, and the backend container won't start
   until `TRUST_PROXY` is set to your proxy container's IP (see README).
 - If you use OIDC with Entra ID, set `OIDC_EMAIL_CLAIM=preferred_username`.
+- Password login is off unless `PASSWORD_LOGIN_ENABLED=true`. Scripts that
+  signed in with email and password should switch to API keys.
 
 ## [1.0.0] - 2026-07-15
 

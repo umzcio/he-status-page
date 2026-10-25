@@ -176,31 +176,24 @@ async function fetchServices(hostname: string, serviceType?: string): Promise<Fe
 }
 
 async function fetchGroup(groupName: string): Promise<FetchResult> {
-  // Get device IDs in the group
-  const groupData = await apiGet<{ devices: { device_id: number }[] }>(
-    `/api/v0/devicegroups/${libreNmsSegment(groupName)}`
+  // One request, whatever the group's size: `full=1` returns every member's
+  // device record. (Fetching members one by one let the size of the LibreNMS
+  // reply decide how many requests a check made.) The reply is bounded by
+  // MAX_VENDOR_FEED_BYTES, and only the fields the status needs are kept.
+  const groupData = await apiGet<{ devices: Partial<LibreNMSDevice>[] }>(
+    `/api/v0/devicegroups/${libreNmsSegment(groupName)}?full=1`
   );
 
-  const deviceIds = (groupData.devices || []).map(d => d.device_id);
-
-  // Fetch full device details for each (in parallel, capped at 10)
-  const devices: LibreNMSDevice[] = [];
-  for (let i = 0; i < deviceIds.length; i += 10) {
-    const batch = deviceIds.slice(i, i + 10);
-    const results = await Promise.allSettled(
-      batch.map(id => apiGet<{ devices: LibreNMSDevice[] }>(`/api/v0/devices/${id}`))
-    );
-    for (const result of results) {
-      if (result.status === 'fulfilled' && result.value.devices?.[0]) {
-        const dev = result.value.devices[0];
-        if (isFalsy(dev.disabled) && isFalsy(dev.ignore)) {
-          devices.push(dev);
-        }
-      }
-    }
+  const members = Array.isArray(groupData.devices) ? groupData.devices : [];
+  if (members.length > 0 && members.every((d) => d.status === undefined)) {
+    throw new Error('LibreNMS did not return device details for the group (devicegroups ?full=1 unsupported)');
   }
 
-  return sanitize({ mode: 'group', devices });
+  const devices = members
+    .filter((d) => isFalsy(d.disabled ?? 0) && isFalsy(d.ignore ?? 0))
+    .map((d) => ({ device_id: d.device_id, status: d.status, disabled: d.disabled, ignore: d.ignore }));
+
+  return { mode: 'group', devices: devices as LibreNMSDevice[] };
 }
 
 export async function fetchStatus(endpoint: string): Promise<FetchResult> {

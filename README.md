@@ -120,7 +120,7 @@ npm run dev
 NEXT_PUBLIC_API_URL=http://localhost:3000 npm run dev:frontend -- -p 3001
 ```
 
-Then open the frontend (e.g. http://localhost:3001). The default admin login comes from `ADMIN_EMAIL` / `ADMIN_PASSWORD` in `.env` (seeded on first `db:seed`).
+Then open the frontend (e.g. http://localhost:3001). The seeded admin account is `ADMIN_EMAIL` from `.env` (created on first `db:seed`); sign in to it through your SSO provider. Its `ADMIN_PASSWORD` is used only if you enable password login (`PASSWORD_LOGIN_ENABLED=true`).
 
 Useful root scripts (see `package.json`):
 
@@ -168,6 +168,7 @@ All configuration lives in a single `.env` file at the repo root (copy from `.en
 | ---------------- | ------------------------------------------------- | ------------------------------------ |
 | `JWT_SECRET`     | Secret used to sign admin JWTs (**required, must be ≥16 characters** — the backend fails fast at startup if missing or too short; change the default) | `your-secret-key-change-in-production` |
 | `JWT_EXPIRES_IN` | JWT lifetime (also the session cookie's Max-Age)  | `7d`                                 |
+| `PASSWORD_LOGIN_ENABLED` | Enable `POST /api/admin/login` (email + password). The admin UI uses SSO only and scripts should use API keys, so leave this off unless you need a break-glass login. When on, each account gets 10 password checks per 15 minutes from all addresses combined; past that, a request needs a solved Turnstile CAPTCHA (`turnstileToken`), so set `TURNSTILE_SECRET_KEY` too | `false` |
 | `COOKIE_SECURE`  | Send the session/CSRF cookies only over HTTPS. **Must be `true` in production.** Set `false` only for local http dev. Defaults to `true` when `NODE_ENV=production`, else `false`. | _(empty)_ |
 | `COOKIE_DOMAIN`  | Optional cookie domain. Leave unset for a host-only cookie; set a parent domain only to share the session across subdomains. | _(empty)_ |
 
