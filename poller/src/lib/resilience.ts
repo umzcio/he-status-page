@@ -7,6 +7,8 @@
  * - HALF_OPEN: one trial request. Success -> CLOSED, failure -> OPEN.
  */
 
+import { throwIfCheckAborted } from './checkContext';
+
 interface CircuitBreakerOptions {
   failureThreshold: number;   // failures before opening (default: 3)
   cooldownMs: number;         // time in OPEN before trying again (default: 5 min)
@@ -88,6 +90,7 @@ export async function withRetry<T>(
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
+    throwIfCheckAborted(); // no retries once the check has been cancelled
     try {
       return await fn();
     } catch (err: any) {

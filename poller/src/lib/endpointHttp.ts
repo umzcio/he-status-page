@@ -1,4 +1,5 @@
 import { createGuardedHttpClient } from '@he-status/shared';
+import { anySignal, checkSignal } from './checkContext';
 
 // Response-size caps. Bodies are streamed and the request is aborted once the
 // cap is passed, so a hostile or broken upstream can't make the poller buffer
@@ -10,10 +11,12 @@ export const MAX_VENDOR_FEED_BYTES = 25 * 1024 * 1024;
 
 // Wall-clock budget for one request, start to last body byte. axios' `timeout`
 // only covers inactivity, so without this a slowly trickled body never ends.
-// Pass `signal: fetchDeadline()` on any request not made through endpointHttp.
+// The signal also fires if the surrounding service check is cancelled (see
+// checkContext.ts). Pass `signal: fetchDeadline()` on any request not made
+// through endpointHttp.
 export const FETCH_DEADLINE_MS = 30_000;
 export function fetchDeadline(): AbortSignal {
-  return AbortSignal.timeout(FETCH_DEADLINE_MS);
+  return anySignal([AbortSignal.timeout(FETCH_DEADLINE_MS), checkSignal()]);
 }
 
 // HTTP client for admin-configured status endpoints. Every connection it makes,
@@ -24,4 +27,9 @@ export function fetchDeadline(): AbortSignal {
 export const endpointHttp = createGuardedHttpClient({
   maxContentLength: MAX_ENDPOINT_RESPONSE_BYTES,
   deadlineMs: FETCH_DEADLINE_MS,
+});
+// Runs before the guard's own interceptor, so requests carry the check signal.
+endpointHttp.interceptors.request.use((config) => {
+  config.signal = config.signal ?? fetchDeadline();
+  return config;
 });

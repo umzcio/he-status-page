@@ -6,6 +6,8 @@ import { getAdapter } from './adapters';
 import { notifyTeams } from './lib/teams';
 import { resilientFetch } from './lib/resilience';
 import { publicFetchFailureMessage } from './lib/fetchErrors';
+import { CheckAbortedError, checkSignal, throwIfCheckAborted } from './lib/checkContext';
+import { createCheckRunner } from './lib/checkRunner';
 import { getCurrentStatus, updateServiceStatus, updateLastChecked, logPollerCheck } from './lib/statusUpdater';
 import { checkExpiredOverrides } from './lib/overrideManager';
 import { activateDueMaintenances, completeExpiredMaintenances, completeMissedMaintenances } from './lib/maintenanceManager';
@@ -29,16 +31,9 @@ let isPolling = false;
 let pollStartedAt: Date | null = null;
 
 // Upper bound on one service check, retries included (each request is itself
-// capped at FETCH_DEADLINE_MS). A check that overruns is abandoned and logged.
+// capped at FETCH_DEADLINE_MS). A check that overruns is cancelled
+// (lib/checkRunner.ts).
 const CHECK_DEADLINE_MS = 3 * 60 * 1000;
-
-function withDeadline<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
-  let timer: NodeJS.Timeout;
-  const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} exceeded ${ms} ms`)), ms);
-  });
-  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
-}
 
 interface Service {
   id: string;
@@ -120,10 +115,14 @@ async function checkServiceStatus(service: Service): Promise<void> {
       // The raw error can name the endpoint, hosts and addresses: it goes to
       // the structured log and poller_logs only. The public status, history
       // and incident text get a fixed message (lib/fetchErrors.ts).
+      if (fetchErr instanceof CheckAbortedError || checkSignal()?.aborted) throw fetchErr;
       log.warn({ err: fetchErr }, 'Fetch failed after retries/circuit breaker — classifying as outage');
       fetchError = fetchErr;
       normalizedStatus = { status: 'outage', message: publicFetchFailureMessage(fetchErr) };
     }
+
+    // A check cancelled at its deadline must not write anything from here on.
+    throwIfCheckAborted();
 
     // Check if status changed
     if (currentStatus && currentStatus.status !== normalizedStatus.status) {
@@ -186,6 +185,10 @@ async function checkServiceStatus(service: Service): Promise<void> {
     });
 
   } catch (error: any) {
+    if (error instanceof CheckAbortedError || checkSignal()?.aborted) {
+      log.warn('Check cancelled at its deadline; nothing written');
+      return;
+    }
     log.error({ err: error }, 'Check failed');
 
     // Log failed check
@@ -199,6 +202,8 @@ async function checkServiceStatus(service: Service): Promise<void> {
     });
   }
 }
+
+const checkRunner = createCheckRunner(checkServiceStatus, CHECK_DEADLINE_MS);
 
 async function runPollingCycle(): Promise<void> {
   const cycleStart = Date.now();
@@ -226,7 +231,7 @@ async function runPollingCycle(): Promise<void> {
     for (let i = 0; i < services.length; i += BATCH_SIZE) {
       const batch = services.slice(i, i + BATCH_SIZE);
       await Promise.allSettled(
-        batch.map(service => withDeadline(checkServiceStatus(service), CHECK_DEADLINE_MS, `Check of ${service.name}`))
+        batch.map(service => checkRunner.run(service))
       );
     }
 
