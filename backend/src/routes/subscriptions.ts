@@ -2,35 +2,12 @@ import { Router, Request, Response } from 'express';
 import { body, validationResult } from 'express-validator';
 import pool from '../db/connection';
 import crypto from 'crypto';
-import axios from 'axios';
 import { sendEmail, isEmailConfigured } from '../lib/email';
 import { verificationEmail } from '../lib/emailTemplates';
 import { escapeHtml } from '@he-status/shared';
+import { verifyTurnstile } from '../lib/turnstile';
 
 const router = Router();
-
-// Verify a Cloudflare Turnstile token server-side against siteverify.
-// Returns true/false for a definitive verdict; throws on network/siteverify
-// failure so the caller can fail closed with a distinct error.
-async function verifyTurnstile(token: string, remoteip?: string): Promise<boolean> {
-  const secret = process.env.TURNSTILE_SECRET_KEY;
-  if (!secret) return true; // Skip if not configured
-
-  const params = new URLSearchParams();
-  params.append('secret', secret);
-  params.append('response', token);
-  if (remoteip) params.append('remoteip', remoteip);
-
-  const response = await axios.post(
-    'https://challenges.cloudflare.com/turnstile/v0/siteverify',
-    params,
-    {
-      timeout: 5000,
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    }
-  );
-  return response.data.success === true;
-}
 
 // Every accepted subscribe request gets this same response, whatever state the
 // address was already in, so the endpoint can't be used to learn who is

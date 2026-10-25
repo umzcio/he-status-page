@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { body, param, validationResult } from 'express-validator';
 import pool from '../db/connection';
 import bcrypt from 'bcrypt';
@@ -14,7 +14,8 @@ import { logAdminAction } from '../lib/adminLog';
 import { autoCreateIncident, autoResolveIncident } from '../lib/incidents';
 import { issueSession, clearSession, SESSION_COOKIE } from '../lib/authCookies';
 import { signSession, revokeSessionToken } from '../lib/session';
-import { applyAccountDelay, recordAccountFailure } from '../lib/loginThrottle';
+import { passwordLoginEnabled, claimAccountCheck } from '../lib/loginThrottle';
+import { isTurnstileConfigured, verifyTurnstile } from '../lib/turnstile';
 
 const router = Router();
 
@@ -68,10 +69,10 @@ router.post('/cas/logout', (req, res) => {
 });
 
 // GET /api/admin/auth/providers - Public: which login providers are available.
-// password is always available; cas/oidc reflect their config state.
+// password reflects PASSWORD_LOGIN_ENABLED; the SSO entries their config state.
 router.get('/auth/providers', (req, res) => {
   res.json({
-    password: true,
+    password: passwordLoginEnabled(),
     cas: cas.isCasConfigured(),
     oidc: isOidcConfigured(),
     saml: isSamlConfigured(),
@@ -155,10 +156,17 @@ router.get('/auth/status', authMiddleware, requireCsrf, (req: AuthRequest, res) 
   });
 });
 
-// POST /api/admin/login - Admin login (legacy email/password)
-router.post('/login', [
+// POST /api/admin/login - Admin login (legacy email/password). Disabled unless
+// PASSWORD_LOGIN_ENABLED=true; see lib/loginThrottle.ts for the limits.
+router.post('/login', (req: Request, res: Response, next: NextFunction) => {
+  if (!passwordLoginEnabled()) {
+    return res.status(403).json({ error: 'Password login is disabled. Sign in with single sign-on.' });
+  }
+  next();
+}, [
   body('email').isEmail().withMessage('Valid email required'),
   body('password').isString().notEmpty().withMessage('Password required'),
+  body('turnstileToken').optional().isString(),
 ], async (req: Request, res: Response) => {
   try {
     const errors = validationResult(req);
@@ -166,11 +174,25 @@ router.post('/login', [
       return res.status(400).json({ error: errors.array()[0].msg });
     }
 
-    const { email, password } = req.body;
+    const { email, password, turnstileToken } = req.body;
 
-    // Slow down accounts under attack, for right and wrong passwords alike
-    // (lib/loginThrottle.ts).
-    await applyAccountDelay(email);
+    // Spend one of the account's password checks. Once they're gone, only a
+    // request with a solved Turnstile challenge gets its password checked.
+    if (!(await claimAccountCheck(email))) {
+      let challengePassed = false;
+      if (isTurnstileConfigured() && turnstileToken) {
+        try {
+          challengePassed = await verifyTurnstile(turnstileToken, req.ip);
+        } catch {
+          challengePassed = false; // fail closed
+        }
+      }
+      if (!challengePassed) {
+        return res.status(429).json({
+          error: 'Too many sign-in attempts for this account. Sign in with single sign-on, complete the CAPTCHA, or try again later.',
+        });
+      }
+    }
 
     const result = await pool.query(
       'SELECT * FROM users WHERE email = $1',
@@ -182,7 +204,6 @@ router.post('/login', [
     const storedHash: string | null = user?.hashed_password || null;
     const validPassword = await bcrypt.compare(password, storedHash || DUMMY_PASSWORD_HASH);
     if (!user || !storedHash || !validPassword) {
-      await recordAccountFailure(email);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
