@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-Fixes for 26 findings from three Claude Security scans.
+Fixes for 43 findings from four Claude Security scans.
 
 - **Admin login and sessions.** The backend now binds to `127.0.0.1` by
   default (`HOST`) and trusts `X-Forwarded-For` only from listed proxy
@@ -55,10 +55,50 @@ Fixes for 26 findings from three Claude Security scans.
   responses are limited to 64 KB, status text is cleaned into bounded plain
   text, and Teams cards escape markdown.
 
+- **Secure defaults.** The seed script needs `ADMIN_EMAIL` and never stores a
+  placeholder or short `ADMIN_PASSWORD` (the account becomes SSO-only), and
+  login always refuses placeholders such as `changeme`. Session cookies are
+  `Secure` unless `COOKIE_SECURE=false`. Docker Compose and the systemd units
+  run the backend and poller with `NODE_ENV=production`.
+- **Sign-in endpoints.** Other websites can no longer spend a visitor's sign-in
+  rate limit: SSO endpoints accept cross-site traffic only as real navigations,
+  and login, code exchange and subscribe accept first-party JSON only. SSO and
+  code exchange have their own budgets; rate-limit keys ignore ports.
+- **Subscriptions.** Plain `.edu` addresses only, delivered to exactly that
+  mailbox. One confirmation mail per address per hour and
+  `VERIFICATION_MAIL_PER_HOUR` site-wide. Each confirmation link activates
+  exactly the services listed in its email. SMTP requires STARTTLS unless
+  `SMTP_REQUIRE_TLS=false`.
+- **SSRF guard.** Guarded clients use their own connection pool and never a
+  proxy. NAT64 addresses are judged by their embedded IPv4, and other
+  IPv4-embedding IPv6 ranges are refused. Refusals no longer reveal DNS answers.
+- **Public data.** The public services list no longer names the admin who set
+  an override. Text published by v1.0.0 (raw fetch errors) is scrubbed by
+  migration `018`.
+- **Audit log.** Every admin change commits together with its audit row.
+- **Poller.** The Apple feed's JSONP wrapper is parsed in linear time; a
+  crafted feed could previously block the poller for hours.
+- **Admin page.** Sign-in errors show fixed messages, never text from the URL.
+
 ### Upgrade notes
 
-- Run migrations (adds `016_session_and_identity_hardening.sql`). Existing
-  admin sessions are invalidated once and users must sign in again.
+- Run migrations (adds `016` through `018`). Existing admin sessions are
+  invalidated once and users must sign in again. Migration `017` keeps one
+  subscription per address and stops mailing stored addresses that aren't
+  plain `.edu` addresses; `018` scrubs old error text from public tables.
+- **Rotate exposed credentials.** v1.0.0 published status endpoint URLs and
+  network error details on the public status page and incidents, and could
+  write the LibreNMS API token to the poller's logs. If any status endpoint URL
+  contained credentials (e.g. `https://user:pass@…` or a token in the query),
+  rotate them, and rotate `LIBRENMS_API_TOKEN`.
+- **Reset default admin passwords.** If you seeded with the old default
+  (`changeme`), that password no longer works for login; reset it from the
+  Users screen if the account needs password login.
+- Remove `NODE_ENV=development` from a production `.env`: under systemd it
+  overrides the units' `NODE_ENV=production`.
+- `ADMIN_EMAIL` must be set before `npm run db:seed`.
+- SMTP now requires STARTTLS on ports other than 465. For a relay without TLS,
+  set `SMTP_REQUIRE_TLS=false`.
 - `TRUST_PROXY_HOPS` is no longer read. If your reverse proxy isn't on the same
   host, set `HOST=0.0.0.0` and `TRUST_PROXY=<proxy address or CIDR>`.
   docker-compose sets `HOST` for you, and the backend container won't start
