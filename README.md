@@ -224,6 +224,14 @@ be `https://` URLs on public addresses, and redirects are not followed.
 | `SMTP_PASS`       | SMTP password (optional)             | _(empty)_           |
 | `EMAIL_FROM`      | From address for notifications       | `status@example.edu`|
 | `EMAIL_FROM_NAME` | From display name                    | `IT Status`         |
+| `SMTP_REQUIRE_TLS` | Require STARTTLS on ports other than 465, so the SMTP password and mail are never sent in cleartext. Set `false` only for a relay with no TLS | `true` |
+| `VERIFICATION_MAIL_PER_HOUR` | Site-wide cap on subscription verification mails per hour. Each address also gets at most one per hour | `200` |
+
+Subscriptions accept plain `.edu` addresses only. Every new or repeated sign-up
+mails a fresh confirmation link that lists the services it covers; confirming
+activates exactly that list. Sign-ups never confirmed are deleted after 7 days.
+Without Turnstile (`TURNSTILE_SECRET_KEY`), the per-recipient and site-wide mail
+caps are the only bound on abuse of the form, and the backend logs a warning.
 
 ### Provider credentials
 

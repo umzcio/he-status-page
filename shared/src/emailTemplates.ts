@@ -26,7 +26,18 @@ function layout(content: string): string {
 </html>`;
 }
 
-export function verificationEmail(token: string): { subject: string; html: string } {
+// Lists the services a verification link will activate, so the address owner
+// sees exactly what they are confirming.
+function coverageHtml(serviceNames: string[]): string {
+  if (serviceNames.length === 0) return '';
+  const shown = serviceNames.slice(0, 20).map((n) => `<li>${escapeHtml(n)}</li>`).join('');
+  const more = serviceNames.length > 20 ? `<li>…and ${serviceNames.length - 20} more</li>` : '';
+  return `
+      <p style="color:#374151;line-height:1.6;margin-bottom:4px;">This subscription covers:</p>
+      <ul style="color:#374151;line-height:1.6;margin-top:0;">${shown}${more}</ul>`;
+}
+
+export function verificationEmail(token: string, serviceNames: string[] = []): { subject: string; html: string } {
   const verifyUrl = `${PUBLIC_URL()}/api/subscriptions/verify/${token}`;
   return {
     subject: `Verify your ${SITE_NAME()} subscription`,
@@ -35,7 +46,7 @@ export function verificationEmail(token: string): { subject: string; html: strin
       <p style="color:#374151;line-height:1.6;">
         You've signed up to receive status notifications from the ${ORG_NAME()} ${SITE_NAME()} Page.
         Please click the button below to verify your email address.
-      </p>
+      </p>${coverageHtml(serviceNames)}
       <div style="text-align:center;margin:24px 0;">
         <a href="${verifyUrl}" style="display:inline-block;padding:12px 24px;background:${PRIMARY_COLOR()};color:white;text-decoration:none;border-radius:6px;font-weight:bold;">
           Verify Email

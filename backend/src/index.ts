@@ -56,6 +56,14 @@ if (process.env.PASSWORD_LOGIN_ENABLED === 'true' && !process.env.TURNSTILE_SECR
   );
 }
 
+if (process.env.SMTP_HOST && !process.env.TURNSTILE_SECRET_KEY && process.env.NODE_ENV === 'production') {
+  logger.warn(
+    'Email subscriptions are open without Turnstile. Abuse is bounded only by the per-client, ' +
+      'per-recipient (1/hour) and site-wide (VERIFICATION_MAIL_PER_HOUR) verification mail limits. ' +
+      'Set TURNSTILE_SECRET_KEY to require a CAPTCHA.'
+  );
+}
+
 // Bind to loopback by default so only a same-host reverse proxy can reach the
 // API. Containers and split-host deployments set HOST=0.0.0.0 explicitly.
 const HOST = process.env.HOST || '127.0.0.1';
