@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto';
 import pool from '../db/connection';
 import { authMiddleware, requireRole, AuthRequest } from './middleware/auth';
 import { requireCsrf } from './middleware/csrf';
-import { logAdminAction } from '../lib/adminLog';
+import { logAdminAction, inTransaction } from '../lib/adminLog';
 
 const router = Router();
 
@@ -110,18 +110,21 @@ router.post('/', authMiddleware, requireCsrf, requireRole(...MUTATE_ROLES), [
 
     const id = randomUUID();
 
-    const result = await pool.query(`
-      INSERT INTO planned_maintenances
-        (id, service_id, series_id, title, description,
-         scheduled_start, scheduled_end, recurrence_type,
-         recurrence_day_of_week, recurrence_day_of_month, announce, created_by)
-      VALUES ($1, $2, $1, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-      RETURNING *
-    `, [id, service_id, title, description || null, start, end, recurrence_type,
-        recurrence_day_of_week ?? null, recurrence_day_of_month ?? null, announce, req.user!.id]);
-
-    await logAdminAction(req.user!.id, 'maintenance_created', {
-      maintenanceId: id, service_id, title, recurrence_type,
+    // The change and its audit row commit together.
+    const result = await inTransaction(async (client) => {
+      const inserted = await client.query(`
+        INSERT INTO planned_maintenances
+          (id, service_id, series_id, title, description,
+           scheduled_start, scheduled_end, recurrence_type,
+           recurrence_day_of_week, recurrence_day_of_month, announce, created_by)
+        VALUES ($1, $2, $1, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        RETURNING *
+      `, [id, service_id, title, description || null, start, end, recurrence_type,
+          recurrence_day_of_week ?? null, recurrence_day_of_month ?? null, announce, req.user!.id]);
+      await logAdminAction(req.user!.id, 'maintenance_created', {
+        maintenanceId: id, service_id, title, recurrence_type,
+      }, client);
+      return inserted;
     });
 
     res.status(201).json(result.rows[0]);
@@ -163,19 +166,21 @@ router.patch('/:id', authMiddleware, requireCsrf, requireRole(...MUTATE_ROLES), 
       return res.status(400).json({ error: 'End time must be after start time' });
     }
 
-    const result = await pool.query(`
-      UPDATE planned_maintenances SET
-        title = COALESCE($2, title),
-        description = CASE WHEN $3::text IS NOT NULL THEN $3 ELSE description END,
-        scheduled_start = $4,
-        scheduled_end = $5,
-        announce = COALESCE($6, announce)
-      WHERE id = $1
-      RETURNING *
-    `, [id, title || null, description !== undefined ? description : null, start, end,
-        announce !== undefined ? announce : null]);
-
-    await logAdminAction(req.user!.id, 'maintenance_updated', { maintenanceId: id });
+    const result = await inTransaction(async (client) => {
+      const updated = await client.query(`
+        UPDATE planned_maintenances SET
+          title = COALESCE($2, title),
+          description = CASE WHEN $3::text IS NOT NULL THEN $3 ELSE description END,
+          scheduled_start = $4,
+          scheduled_end = $5,
+          announce = COALESCE($6, announce)
+        WHERE id = $1
+        RETURNING *
+      `, [id, title || null, description !== undefined ? description : null, start, end,
+          announce !== undefined ? announce : null]);
+      await logAdminAction(req.user!.id, 'maintenance_updated', { maintenanceId: id }, client);
+      return updated;
+    });
 
     res.json(result.rows[0]);
   } catch (err) {
@@ -202,12 +207,13 @@ router.delete('/:id', authMiddleware, requireCsrf, requireRole(...MUTATE_ROLES),
       return res.status(409).json({ error: 'Window is already completed or cancelled' });
     }
 
-    await pool.query(
-      "UPDATE planned_maintenances SET status = 'cancelled' WHERE id = $1",
-      [id]
-    );
-
-    await logAdminAction(req.user!.id, 'maintenance_cancelled', { maintenanceId: id });
+    await inTransaction(async (client) => {
+      await client.query(
+        "UPDATE planned_maintenances SET status = 'cancelled' WHERE id = $1",
+        [id]
+      );
+      await logAdminAction(req.user!.id, 'maintenance_cancelled', { maintenanceId: id }, client);
+    });
 
     res.json({ success: true });
   } catch (err) {
@@ -233,13 +239,15 @@ router.delete('/:id/series', authMiddleware, requireCsrf, requireRole(...MUTATE_
 
     const { series_id } = row.rows[0];
 
-    const result = await pool.query(`
-      UPDATE planned_maintenances SET status = 'cancelled'
-      WHERE series_id = $1 AND status = 'scheduled'
-    `, [series_id]);
-
-    await logAdminAction(req.user!.id, 'maintenance_series_cancelled', {
-      seriesId: series_id, count: result.rowCount,
+    const result = await inTransaction(async (client) => {
+      const cancelled = await client.query(`
+        UPDATE planned_maintenances SET status = 'cancelled'
+        WHERE series_id = $1 AND status = 'scheduled'
+      `, [series_id]);
+      await logAdminAction(req.user!.id, 'maintenance_series_cancelled', {
+        seriesId: series_id, count: cancelled.rowCount,
+      }, client);
+      return cancelled;
     });
 
     res.json({ success: true, cancelled: result.rowCount });

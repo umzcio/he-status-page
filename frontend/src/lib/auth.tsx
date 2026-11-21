@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { adminApi } from './adminApi';
+import { ssoErrorMessage } from './ssoErrors';
 
 interface User {
   id: string;
@@ -43,27 +44,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // One-time, mount-only bootstrap of auth state. There is no token in JS or
   // localStorage anymore — the session lives entirely in an HttpOnly cookie, so
   // we always (re)validate against the backend:
-  //   - ?error  -> show it, scrub the URL.
+  //   - ?error  -> a short code from an SSO callback: show the fixed message
+  //                for it (never text from the URL), scrub the URL, and still
+  //                check the session — a signed-in admin stays signed in.
   //   - ?code   -> scrub the URL, POST the one-time code to /auth/exchange
   //                (which sets the cookie), then hydrate via /auth/status.
   //   - else    -> hydrate directly from /auth/status (existing cookie).
-  // These setState calls initialize from external (non-React) sources and run
-  // exactly once, so they cannot cause the render cascade the rule guards
-  // against; the single async flow is guarded by `active` so a late response
-  // can't set state after unmount.
-  /* eslint-disable react-hooks/set-state-in-effect */
+  // The single async flow is guarded by `active` so a late response can't set
+  // state after unmount.
   useEffect(() => {
     let active = true;
 
     const params = new URLSearchParams(window.location.search);
     const urlCode = params.get('code');
-    const urlError = params.get('error');
+    const notice = ssoErrorMessage(params.get('error'));
 
-    if (urlError) {
-      setError(decodeURIComponent(urlError));
+    if (notice) {
       window.history.replaceState({}, '', window.location.pathname);
-      setIsLoading(false);
-      return;
     }
 
     (async () => {
@@ -87,6 +84,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const currentUser = await fetchStatus();
         if (!active) return;
         setUser(currentUser);
+        if (!currentUser && notice) setError(notice);
       } catch {
         if (active) setError('Failed to process authentication response');
       } finally {
@@ -98,7 +96,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       active = false;
     };
   }, []);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   const login = useCallback((provider: AuthProvider = 'cas') => {
     // Redirect to the chosen SSO provider's login via the backend.

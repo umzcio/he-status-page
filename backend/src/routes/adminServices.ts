@@ -3,7 +3,7 @@ import pool from '../db/connection';
 import { authMiddleware, requireRole, AuthRequest } from './middleware/auth';
 import { requireCsrf } from './middleware/csrf';
 import { listDevices, listGroups, listServicesForDevice } from '../lib/librenms';
-import { logAdminAction } from '../lib/adminLog';
+import { logAdminAction, inTransaction } from '../lib/adminLog';
 import {
   assertEndpointAllowed,
   isSsrfBlocked,
@@ -189,7 +189,9 @@ router.put('/:id', authMiddleware, requireCsrf, requireRole('super_admin'), asyn
       }
     }
 
-    const result = await pool.query(`
+    // The change and its audit row commit together.
+    const updated = await inTransaction(async (client) => {
+      const result = await client.query(`
       UPDATE services SET
         name = COALESCE($1, name),
         description = COALESCE($2, description),
@@ -206,14 +208,16 @@ router.put('/:id', authMiddleware, requireCsrf, requireRole('super_admin'), asyn
       WHERE id = $12
       RETURNING *
     `, [name, description, categorySlug, category_id, provider, status_api_endpoint, status_api_type, check_enabled, external_link, display_order, visible, id]);
+      if (result.rows.length === 0) return null;
+      await logAdminAction(req.user!.id, 'service_updated', { serviceId: id, name }, client);
+      return result.rows[0];
+    });
 
-    if (result.rows.length === 0) {
+    if (!updated) {
       return res.status(404).json({ error: 'Service not found' });
     }
 
-    await logAdminAction(req.user!.id, 'service_updated', { serviceId: id, name });
-
-    res.json(result.rows[0]);
+    res.json(updated);
   } catch (error) {
     console.error('Error updating service:', error);
     res.status(500).json({ error: 'Failed to update service' });
@@ -225,13 +229,16 @@ router.delete('/:id', authMiddleware, requireCsrf, requireRole('super_admin'), a
   try {
     const { id } = req.params;
 
-    const result = await pool.query('DELETE FROM services WHERE id = $1 RETURNING name', [id]);
+    const deleted = await inTransaction(async (client) => {
+      const result = await client.query('DELETE FROM services WHERE id = $1 RETURNING name', [id]);
+      if (result.rows.length === 0) return null;
+      await logAdminAction(req.user!.id, 'service_deleted', { serviceId: id, name: result.rows[0].name }, client);
+      return result.rows[0];
+    });
 
-    if (result.rows.length === 0) {
+    if (!deleted) {
       return res.status(404).json({ error: 'Service not found' });
     }
-
-    await logAdminAction(req.user!.id, 'service_deleted', { serviceId: id, name: result.rows[0].name });
 
     res.json({ success: true });
   } catch (error) {
@@ -314,14 +321,16 @@ router.post('/:id/dependencies', authMiddleware, requireCsrf, requireRole('super
       return res.status(400).json({ error: 'A service cannot depend on itself' });
     }
 
-    const result = await pool.query(`
-      INSERT INTO service_dependencies (service_id, depends_on_service_id)
-      VALUES ($1, $2)
-      ON CONFLICT (service_id, depends_on_service_id) DO NOTHING
-      RETURNING *
-    `, [id, depends_on_service_id]);
-
-    await logAdminAction(req.user!.id, 'dependency_added', { service_id: id, depends_on_service_id });
+    const result = await inTransaction(async (client) => {
+      const inserted = await client.query(`
+        INSERT INTO service_dependencies (service_id, depends_on_service_id)
+        VALUES ($1, $2)
+        ON CONFLICT (service_id, depends_on_service_id) DO NOTHING
+        RETURNING *
+      `, [id, depends_on_service_id]);
+      await logAdminAction(req.user!.id, 'dependency_added', { service_id: id, depends_on_service_id }, client);
+      return inserted;
+    });
 
     res.status(201).json(result.rows[0] || { message: 'Already exists' });
   } catch (error) {
@@ -335,16 +344,19 @@ router.delete('/:id/dependencies/:depId', authMiddleware, requireCsrf, requireRo
   try {
     const { id, depId } = req.params;
 
-    const result = await pool.query(
-      'DELETE FROM service_dependencies WHERE id = $1 AND service_id = $2 RETURNING *',
-      [depId, id]
-    );
+    const removed = await inTransaction(async (client) => {
+      const result = await client.query(
+        'DELETE FROM service_dependencies WHERE id = $1 AND service_id = $2 RETURNING *',
+        [depId, id]
+      );
+      if (result.rows.length === 0) return null;
+      await logAdminAction(req.user!.id, 'dependency_removed', { dependency_id: depId, service_id: id }, client);
+      return result.rows[0];
+    });
 
-    if (result.rows.length === 0) {
+    if (!removed) {
       return res.status(404).json({ error: 'Dependency not found' });
     }
-
-    await logAdminAction(req.user!.id, 'dependency_removed', { dependency_id: depId, service_id: id });
 
     res.json({ success: true });
   } catch (error) {

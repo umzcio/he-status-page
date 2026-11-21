@@ -3,7 +3,7 @@ import pool from '../db/connection';
 import { authMiddleware, AuthRequest, requireRole } from './middleware/auth';
 import { requireCsrf } from './middleware/csrf';
 import { buildStatusChangeCard, sendTeamsWebhook } from '../lib/teams';
-import { logAdminAction } from '../lib/adminLog';
+import { logAdminAction, inTransaction } from '../lib/adminLog';
 import { assertEndpointAllowed, isSsrfBlocked, PUBLIC_BLOCKED_MESSAGE } from '@he-status/shared';
 
 const router = Router();
@@ -55,17 +55,19 @@ router.post('/', async (req: AuthRequest, res) => {
       return res.status(400).json({ error: problem });
     }
 
-    const result = await pool.query(
-      `INSERT INTO teams_webhooks (name, webhook_url, enabled, category_filter)
-       VALUES ($1, $2, $3, $4)
-       RETURNING *`,
-      [name, webhook_url, enabled !== false, category_filter ? JSON.stringify(category_filter) : null]
-    );
+    // The change and its audit row commit together.
+    const created = await inTransaction(async (client) => {
+      const result = await client.query(
+        `INSERT INTO teams_webhooks (name, webhook_url, enabled, category_filter)
+         VALUES ($1, $2, $3, $4)
+         RETURNING *`,
+        [name, webhook_url, enabled !== false, category_filter ? JSON.stringify(category_filter) : null]
+      );
+      await logAdminAction(req.user!.id, 'webhook_created', { webhookId: result.rows[0].id, name }, client);
+      return result.rows[0];
+    });
 
-    // Log admin action
-    await logAdminAction(req.user!.id, 'webhook_created', { webhookId: result.rows[0].id, name });
-
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(created);
   } catch (error) {
     console.error('Create webhook error:', error);
     res.status(500).json({ error: 'Failed to create webhook' });
@@ -98,19 +100,21 @@ router.put('/:id', async (req: AuthRequest, res) => {
       idx++;
     }
 
-    const result = await pool.query(
-      `UPDATE teams_webhooks SET ${sets.join(', ')} WHERE id = $1 RETURNING *`,
-      params
-    );
+    const updated = await inTransaction(async (client) => {
+      const result = await client.query(
+        `UPDATE teams_webhooks SET ${sets.join(', ')} WHERE id = $1 RETURNING *`,
+        params
+      );
+      if (result.rows.length === 0) return null;
+      await logAdminAction(req.user!.id, 'webhook_updated', { webhookId: id }, client);
+      return result.rows[0];
+    });
 
-    if (result.rows.length === 0) {
+    if (!updated) {
       return res.status(404).json({ error: 'Webhook not found' });
     }
 
-    // Log admin action
-    await logAdminAction(req.user!.id, 'webhook_updated', { webhookId: id });
-
-    res.json(result.rows[0]);
+    res.json(updated);
   } catch (error) {
     console.error('Update webhook error:', error);
     res.status(500).json({ error: 'Failed to update webhook' });
@@ -122,17 +126,19 @@ router.delete('/:id', async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 
-    const result = await pool.query(
-      'DELETE FROM teams_webhooks WHERE id = $1 RETURNING id, name',
-      [id]
-    );
+    const deleted = await inTransaction(async (client) => {
+      const result = await client.query(
+        'DELETE FROM teams_webhooks WHERE id = $1 RETURNING id, name',
+        [id]
+      );
+      if (result.rows.length === 0) return null;
+      await logAdminAction(req.user!.id, 'webhook_deleted', { webhookId: id, name: result.rows[0].name }, client);
+      return result.rows[0];
+    });
 
-    if (result.rows.length === 0) {
+    if (!deleted) {
       return res.status(404).json({ error: 'Webhook not found' });
     }
-
-    // Log admin action
-    await logAdminAction(req.user!.id, 'webhook_deleted', { webhookId: id, name: result.rows[0].name });
 
     res.json({ success: true });
   } catch (error) {

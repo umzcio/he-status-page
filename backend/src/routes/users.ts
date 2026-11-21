@@ -3,7 +3,7 @@ import pool from '../db/connection';
 import bcrypt from 'bcrypt';
 import { authMiddleware, requireRole, AuthRequest } from './middleware/auth';
 import { requireCsrf } from './middleware/csrf';
-import { logAdminAction } from '../lib/adminLog';
+import { logAdminAction, inTransaction } from '../lib/adminLog';
 import { issueSession } from '../lib/authCookies';
 import { signSession } from '../lib/session';
 import { passwordProblem } from '../lib/passwordPolicy';
@@ -46,15 +46,18 @@ router.post('/', authMiddleware, requireCsrf, requireRole('super_admin'), async 
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const result = await pool.query(`
-      INSERT INTO users (email, name, role, hashed_password)
-      VALUES ($1, $2, $3, $4)
-      RETURNING id, email, name, role, created_at, last_login_at
-    `, [email, name || null, role, hashedPassword]);
+    // The change and its audit row commit together.
+    const created = await inTransaction(async (client) => {
+      const result = await client.query(`
+        INSERT INTO users (email, name, role, hashed_password)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id, email, name, role, created_at, last_login_at
+      `, [email, name || null, role, hashedPassword]);
+      await logAdminAction(req.user!.id, 'user_created', { email, role }, client);
+      return result.rows[0];
+    });
 
-    await logAdminAction(req.user!.id, 'user_created', { email, role });
-
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(created);
   } catch (error: any) {
     if (error.code === '23505') {
       return res.status(409).json({ error: 'Email already exists' });
@@ -82,21 +85,24 @@ router.put('/:id', authMiddleware, requireCsrf, requireRole('super_admin'), asyn
       }
     }
 
-    const result = await pool.query(`
-      UPDATE users SET
-        name = COALESCE($1, name),
-        role = COALESCE($2, role)
-      WHERE id = $3
-      RETURNING id, email, name, role, created_at, last_login_at
-    `, [name, role, id]);
+    const updated = await inTransaction(async (client) => {
+      const result = await client.query(`
+        UPDATE users SET
+          name = COALESCE($1, name),
+          role = COALESCE($2, role)
+        WHERE id = $3
+        RETURNING id, email, name, role, created_at, last_login_at
+      `, [name, role, id]);
+      if (result.rows.length === 0) return null;
+      await logAdminAction(req.user!.id, 'user_updated', { targetUserId: id, name, role }, client);
+      return result.rows[0];
+    });
 
-    if (result.rows.length === 0) {
+    if (!updated) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    await logAdminAction(req.user!.id, 'user_updated', { targetUserId: id, name, role });
-
-    res.json(result.rows[0]);
+    res.json(updated);
   } catch (error) {
     console.error('Error updating user:', error);
     res.status(500).json({ error: 'Failed to update user' });
@@ -127,9 +133,10 @@ router.delete('/:id', authMiddleware, requireCsrf, requireRole('super_admin'), a
       return res.status(400).json({ error: 'Cannot delete the last super_admin' });
     }
 
-    await pool.query('DELETE FROM users WHERE id = $1', [id]);
-
-    await logAdminAction(req.user!.id, 'user_deleted', { targetUserId: id });
+    await inTransaction(async (client) => {
+      await client.query('DELETE FROM users WHERE id = $1', [id]);
+      await logAdminAction(req.user!.id, 'user_deleted', { targetUserId: id }, client);
+    });
 
     res.json({ success: true });
   } catch (error) {
@@ -152,22 +159,25 @@ router.post('/:id/reset-password', authMiddleware, requireCsrf, requireRole('sup
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const result = await pool.query(
-      `UPDATE users SET hashed_password = $1, token_version = token_version + 1
-       WHERE id = $2
-       RETURNING id, email, role, token_version`,
-      [hashedPassword, id]
-    );
+    const updated = await inTransaction(async (client) => {
+      const result = await client.query(
+        `UPDATE users SET hashed_password = $1, token_version = token_version + 1
+         WHERE id = $2
+         RETURNING id, email, role, token_version`,
+        [hashedPassword, id]
+      );
+      if (result.rows.length === 0) return null;
+      await logAdminAction(req.user!.id, 'user_password_reset', { targetUserId: id }, client);
+      return result.rows[0];
+    });
 
-    if (result.rows.length === 0) {
+    if (!updated) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    await logAdminAction(req.user!.id, 'user_password_reset', { targetUserId: id });
-
     // Resetting your own password should not log out the browser doing it.
     if (id === req.user!.id && req.authVia === 'cookie') {
-      issueSession(res, signSession(result.rows[0]));
+      issueSession(res, signSession(updated));
     }
 
     res.json({ success: true });
@@ -183,16 +193,19 @@ router.post('/:id/revoke-sessions', authMiddleware, requireCsrf, requireRole('su
   try {
     const { id } = req.params;
 
-    const result = await pool.query(
-      'UPDATE users SET token_version = token_version + 1 WHERE id = $1 RETURNING id',
-      [id]
-    );
+    const revoked = await inTransaction(async (client) => {
+      const result = await client.query(
+        'UPDATE users SET token_version = token_version + 1 WHERE id = $1 RETURNING id',
+        [id]
+      );
+      if (result.rows.length === 0) return null;
+      await logAdminAction(req.user!.id, 'user_sessions_revoked', { targetUserId: id }, client);
+      return result.rows[0];
+    });
 
-    if (result.rows.length === 0) {
+    if (!revoked) {
       return res.status(404).json({ error: 'User not found' });
     }
-
-    await logAdminAction(req.user!.id, 'user_sessions_revoked', { targetUserId: id });
 
     res.json({ success: true });
   } catch (error) {
