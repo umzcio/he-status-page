@@ -4,7 +4,7 @@ import { authMiddleware, AuthRequest, requireRole } from './middleware/auth';
 import { requireCsrf } from './middleware/csrf';
 import { buildStatusChangeCard, sendTeamsWebhook } from '../lib/teams';
 import { logAdminAction } from '../lib/adminLog';
-import { assertEndpointAllowed } from '@he-status/shared';
+import { assertEndpointAllowed, isSsrfBlocked, PUBLIC_BLOCKED_MESSAGE } from '@he-status/shared';
 
 const router = Router();
 
@@ -19,7 +19,9 @@ async function webhookUrlProblem(webhookUrl: unknown): Promise<string | null> {
     await assertEndpointAllowed(webhookUrl, { allowPrivate: false });
     return null;
   } catch (err: any) {
-    return err.message;
+    // One fixed message; the resolved addresses go to the server log only.
+    console.warn('Webhook URL refused:', isSsrfBlocked(err) ? err.message : err);
+    return PUBLIC_BLOCKED_MESSAGE;
   }
 }
 

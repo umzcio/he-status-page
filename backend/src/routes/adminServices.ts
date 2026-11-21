@@ -4,7 +4,13 @@ import { authMiddleware, requireRole, AuthRequest } from './middleware/auth';
 import { requireCsrf } from './middleware/csrf';
 import { listDevices, listGroups, listServicesForDevice } from '../lib/librenms';
 import { logAdminAction } from '../lib/adminLog';
-import { assertEndpointAllowed, libreNmsSegment, parseLibreNmsEndpoint } from '@he-status/shared';
+import {
+  assertEndpointAllowed,
+  isSsrfBlocked,
+  libreNmsSegment,
+  parseLibreNmsEndpoint,
+  PUBLIC_BLOCKED_MESSAGE,
+} from '@he-status/shared';
 
 const router = Router();
 
@@ -23,6 +29,12 @@ async function endpointProblem(type: unknown, endpoint: unknown): Promise<string
     }
     return null;
   } catch (err: any) {
+    // Address-policy refusals get one fixed message: the detail (resolved
+    // addresses, DNS errors) is for the server log only.
+    if (isSsrfBlocked(err)) {
+      console.warn('Service endpoint refused:', err.message);
+      return PUBLIC_BLOCKED_MESSAGE;
+    }
     return err.message;
   }
 }
@@ -137,6 +149,9 @@ router.put('/:id', authMiddleware, requireCsrf, requireRole('super_admin'), asyn
         'SELECT status_api_endpoint, status_api_type FROM services WHERE id = $1',
         [id]
       );
+      if (current.rows.length === 0) {
+        return res.status(404).json({ error: 'Service not found' });
+      }
       const problem = await endpointProblem(
         status_api_type ?? current.rows[0]?.status_api_type,
         status_api_endpoint ?? current.rows[0]?.status_api_endpoint

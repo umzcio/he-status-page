@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import http from 'http';
+import axios from 'axios';
 import type { AddressInfo } from 'net';
 import { createGuardedHttpClient, createGuardedLookup } from '../urlGuard';
 
@@ -138,5 +139,55 @@ describe('createGuardedHttpClient', () => {
     });
     expect(Date.now() - started).toBeLessThan(3000);
     timers.forEach(clearInterval);
+  });
+
+  it("never reuses a keep-alive socket another client opened", async () => {
+    const target = await server((_req, res) => res.end('secret'));
+    const toLoopback = (_h: string, _o: unknown, cb: (e: null, a: string, f: number) => void) => cb(null, '127.0.0.1', 4);
+
+    // An unguarded client leaves an idle keep-alive connection to internal.test.
+    const keepAlive = new http.Agent({ keepAlive: true });
+    await axios.get(`http://internal.test:${target.port}/`, { httpAgent: keepAlive, lookup: toLoopback as any });
+    const before = target.connections();
+
+    // A guarded client must not ride that socket, even if a caller offers the
+    // agent; it opens its own connection, whose lookup refuses loopback.
+    const client = createGuardedHttpClient({
+      allowPrivate: false,
+      resolve: (_h, cb) => cb(null, [{ address: '127.0.0.1', family: 4 }]),
+    });
+    await expect(
+      client.get(`http://internal.test:${target.port}/`, { httpAgent: keepAlive, lookup: toLoopback as any })
+    ).rejects.toThrow(/SSRF guard/);
+    expect(target.connections()).toBe(before);
+    keepAlive.destroy();
+  });
+
+  it('ignores HTTP(S)_PROXY, so the guard checks the real target', async () => {
+    const proxySeen: string[] = [];
+    const proxy = await server((req, res) => {
+      proxySeen.push(req.url || '');
+      res.end('proxied');
+    });
+    const saved = { HTTP_PROXY: process.env.HTTP_PROXY, http_proxy: process.env.http_proxy };
+    process.env.HTTP_PROXY = process.env.http_proxy = `http://127.0.0.1:${proxy.port}`;
+    try {
+      const client = createGuardedHttpClient({
+        allowPrivate: false,
+        resolve: (_h, cb) => cb(null, [{ address: '10.0.0.5', family: 4 }]),
+      });
+      await expect(client.get('http://internal.test/')).rejects.toThrow(/SSRF guard/);
+      await expect(client.get('http://10.0.0.5/')).rejects.toThrow(/SSRF guard/);
+      // Even a caller-supplied proxy is ignored.
+      await expect(
+        client.get('http://internal.test/', { proxy: { host: '127.0.0.1', port: proxy.port, protocol: 'http' } })
+      ).rejects.toThrow(/SSRF guard/);
+      expect(proxySeen).toEqual([]);
+    } finally {
+      process.env.HTTP_PROXY = saved.HTTP_PROXY;
+      process.env.http_proxy = saved.http_proxy;
+      if (saved.HTTP_PROXY === undefined) delete process.env.HTTP_PROXY;
+      if (saved.http_proxy === undefined) delete process.env.http_proxy;
+    }
   });
 });
