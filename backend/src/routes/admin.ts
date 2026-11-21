@@ -15,6 +15,7 @@ import { autoCreateIncident, autoResolveIncident } from '../lib/incidents';
 import { issueSession, clearSession, SESSION_COOKIE } from '../lib/authCookies';
 import { signSession, revokeSessionToken } from '../lib/session';
 import { passwordLoginEnabled, claimAccountCheck } from '../lib/loginThrottle';
+import { isKnownPlaceholderPassword } from '../lib/passwordPolicy';
 import { isTurnstileConfigured, verifyTurnstile } from '../lib/turnstile';
 
 const router = Router();
@@ -203,7 +204,9 @@ router.post('/login', (req: Request, res: Response, next: NextFunction) => {
     const user = result.rows[0];
     const storedHash: string | null = user?.hashed_password || null;
     const validPassword = await bcrypt.compare(password, storedHash || DUMMY_PASSWORD_HASH);
-    if (!user || !storedHash || !validPassword) {
+    // A well-known placeholder is never a valid password, even if an account
+    // was seeded with it by an older version.
+    if (!user || !storedHash || !validPassword || isKnownPlaceholderPassword(password)) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 

@@ -39,17 +39,17 @@ describe('backend/src/lib/authCookies', () => {
     expect(csrf.secure).toBe(session.secure);
   });
 
-  it('Secure defaults to true in production and false otherwise', async () => {
-    process.env.NODE_ENV = 'production';
-    delete process.env.COOKIE_SECURE;
-    const prod = await import('../lib/authCookies');
-    expect(prod.sessionCookieOptions().secure).toBe(true);
-
-    vi.resetModules();
-    process.env = { ...ORIGINAL_ENV, JWT_SECRET: 'a-valid-secret-that-is-long-enough', NODE_ENV: 'development' };
-    delete process.env.COOKIE_SECURE;
-    const dev = await import('../lib/authCookies');
-    expect(dev.sessionCookieOptions().secure).toBe(false);
+  it('Secure is on by default whatever NODE_ENV says', async () => {
+    for (const nodeEnv of ['production', 'development', undefined]) {
+      vi.resetModules();
+      process.env = { ...ORIGINAL_ENV, JWT_SECRET: 'a-valid-secret-that-is-long-enough' };
+      if (nodeEnv) process.env.NODE_ENV = nodeEnv;
+      else delete process.env.NODE_ENV;
+      delete process.env.COOKIE_SECURE;
+      const { sessionCookieOptions, csrfCookieOptions } = await import('../lib/authCookies');
+      expect(sessionCookieOptions().secure).toBe(true);
+      expect(csrfCookieOptions().secure).toBe(true);
+    }
   });
 
   it('COOKIE_SECURE=false forces insecure even in production (local http dev)', async () => {

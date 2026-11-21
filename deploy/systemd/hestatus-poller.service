@@ -9,6 +9,8 @@ User=hestatus
 Group=hestatus
 WorkingDirectory=/opt/hestatus/hestatus
 EnvironmentFile=/opt/hestatus/hestatus/.env
+# Applies unless .env sets NODE_ENV itself (EnvironmentFile wins).
+Environment=NODE_ENV=production
 ExecStart=/usr/bin/node poller/dist/index.js
 Restart=always
 RestartSec=10

@@ -1,5 +1,6 @@
 import pool from './connection';
 import bcrypt from 'bcrypt';
+import { passwordProblem } from '../lib/passwordPolicy';
 
 async function seed() {
   const client = await pool.connect();
@@ -7,21 +8,32 @@ async function seed() {
   try {
     console.log('Seeding database...');
 
-    // Create admin user
-    const hashedPassword = await bcrypt.hash(process.env.ADMIN_PASSWORD || 'changeme', 10);
+    // Create the first super_admin. ADMIN_EMAIL is required (no default
+    // address). ADMIN_PASSWORD is optional: without an acceptable one the
+    // account has no password and signs in through SSO only, so seeding from
+    // an unedited example config never creates a guessable login.
+    const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+    if (!adminEmail) {
+      throw new Error('ADMIN_EMAIL must be set to the email of the first super_admin (the one your SSO provider returns).');
+    }
+    const adminPassword = process.env.ADMIN_PASSWORD || '';
+    const problem = adminPassword ? passwordProblem(adminPassword) : null;
+    const hashedPassword = adminPassword && !problem ? await bcrypt.hash(adminPassword, 10) : null;
 
     await client.query(`
       INSERT INTO users (email, name, role, hashed_password)
       VALUES ($1, $2, $3, $4)
       ON CONFLICT (email) DO NOTHING
-    `, [
-      process.env.ADMIN_EMAIL || 'admin@example.edu',
-      'Site Admin',
-      'super_admin',
-      hashedPassword
-    ]);
+    `, [adminEmail, 'Site Admin', 'super_admin', hashedPassword]);
 
-    console.log('✓ Admin user created');
+    console.log(`✓ Admin user ${adminEmail} created (if it did not exist)`);
+    if (!hashedPassword) {
+      console.log(
+        problem
+          ? `  ! ADMIN_PASSWORD ignored (${problem}); the account signs in through SSO only.`
+          : '  ADMIN_PASSWORD not set; the account signs in through SSO only.'
+      );
+    }
 
     // Skip service seeding if services already exist, to keep seeding idempotent
     // and avoid inserting duplicate services on re-runs.
@@ -228,8 +240,7 @@ async function seed() {
     console.log('\n===========================================');
     console.log('Database setup complete!');
     console.log('===========================================');
-    console.log(`Admin Email: ${process.env.ADMIN_EMAIL || 'admin@example.edu'}`);
-    console.log(`Admin Password: ${process.env.ADMIN_PASSWORD || 'changeme'}`);
+    console.log(`Admin Email: ${adminEmail}`);
     console.log('===========================================\n');
 
   } catch (error) {

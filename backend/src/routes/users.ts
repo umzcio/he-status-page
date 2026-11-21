@@ -6,6 +6,7 @@ import { requireCsrf } from './middleware/csrf';
 import { logAdminAction } from '../lib/adminLog';
 import { issueSession } from '../lib/authCookies';
 import { signSession } from '../lib/session';
+import { passwordProblem } from '../lib/passwordPolicy';
 
 const router = Router();
 
@@ -33,8 +34,9 @@ router.post('/', authMiddleware, requireCsrf, requireRole('super_admin'), async 
       return res.status(400).json({ error: 'email, password, and role are required' });
     }
 
-    if (password.length < 12) {
-      return res.status(400).json({ error: 'Password must be at least 12 characters' });
+    const problem = passwordProblem(password);
+    if (problem) {
+      return res.status(400).json({ error: problem });
     }
 
     const validRoles = ['super_admin', 'admin', 'viewer'];
@@ -143,8 +145,9 @@ router.post('/:id/reset-password', authMiddleware, requireCsrf, requireRole('sup
     const { id } = req.params;
     const { password } = req.body;
 
-    if (!password || password.length < 12) {
-      return res.status(400).json({ error: 'Password must be at least 12 characters' });
+    const problem = passwordProblem(password);
+    if (problem) {
+      return res.status(400).json({ error: problem });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);

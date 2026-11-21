@@ -156,7 +156,7 @@ All configuration lives in a single `.env` file at the repo root (copy from `.en
 
 | Variable                    | Description                                                                                             | Default   |
 | --------------------------- | ------------------------------------------------------------------------------------------------------- | --------- |
-| `NODE_ENV`                  | `development` or `production`                                                                           | `development` |
+| `NODE_ENV`                  | `production` (set by docker-compose and the systemd units) or `development` (local dev only: unmasks 5xx details, allows localhost CORS). Don't set it in a production `.env`; the systemd units can't override a value there | _(unset)_ |
 | `PORT`                      | Port the backend API listens on (the value the backend actually reads)                                 | `3000`    |
 | `HOST`                      | Interface the backend listens on. `127.0.0.1` accepts only a same-host reverse proxy; set `0.0.0.0` if the proxy is elsewhere (docker-compose does) | `127.0.0.1` |
 | `TRUST_PROXY`               | Comma-separated addresses/CIDRs (or `loopback`, `linklocal`, `uniquelocal`) of proxies allowed to set `X-Forwarded-For`. Hop counts are rejected because they trust any peer | `loopback` |
@@ -169,7 +169,7 @@ All configuration lives in a single `.env` file at the repo root (copy from `.en
 | `JWT_SECRET`     | Secret used to sign admin JWTs (**required, must be ≥16 characters** — the backend fails fast at startup if missing or too short; change the default) | `your-secret-key-change-in-production` |
 | `JWT_EXPIRES_IN` | JWT lifetime (also the session cookie's Max-Age)  | `7d`                                 |
 | `PASSWORD_LOGIN_ENABLED` | Enable `POST /api/admin/login` (email + password). The admin UI uses SSO only and scripts should use API keys, so leave this off unless you need a break-glass login. When on, each account gets 10 password checks per 15 minutes from all addresses combined; past that, a request needs a solved Turnstile CAPTCHA (`turnstileToken`), so set `TURNSTILE_SECRET_KEY` too | `false` |
-| `COOKIE_SECURE`  | Send the session/CSRF cookies only over HTTPS. **Must be `true` in production.** Set `false` only for local http dev. Defaults to `true` when `NODE_ENV=production`, else `false`. | _(empty)_ |
+| `COOKIE_SECURE`  | Session/CSRF cookies are HTTPS-only unless this is `false`. Set `false` only for local http dev (browsers already accept Secure cookies on `http://localhost`). | _(empty)_ |
 | `COOKIE_DOMAIN`  | Optional cookie domain. Leave unset for a host-only cookie; set a parent domain only to share the session across subdomains. | _(empty)_ |
 
 The admin session JWT is stored in an **HttpOnly** cookie (`hsp_session`) — never in
@@ -322,8 +322,8 @@ the protection. SP metadata is served at `${PUBLIC_URL}/api/admin/saml/metadata`
 
 | Variable         | Description                                       | Default             |
 | ---------------- | ------------------------------------------------- | ------------------- |
-| `ADMIN_EMAIL`    | Email of the admin account created on seed        | `admin@example.edu` |
-| `ADMIN_PASSWORD` | Password of the admin account (**change this**)   | `changeme`          |
+| `ADMIN_EMAIL`    | Email of the first super_admin, created on seed (**required**; use the email your SSO provider returns) | _(empty)_ |
+| `ADMIN_PASSWORD` | Optional password for that account, used only with `PASSWORD_LOGIN_ENABLED=true`. Empty, placeholder, or under 12 characters → SSO-only account | _(empty)_ |
 
 ## Deployment
 
@@ -333,7 +333,7 @@ the protection. SP metadata is served at `${PUBLIC_URL}/api/admin/saml/metadata`
 
 ```bash
 cp .env.example .env
-# Edit .env — at minimum set POSTGRES_PASSWORD, JWT_SECRET, ADMIN_PASSWORD,
+# Edit .env — at minimum set POSTGRES_PASSWORD, JWT_SECRET, ADMIN_EMAIL,
 # and TRUST_PROXY (your reverse proxy's address; see below).
 docker compose up -d --build
 # Migrations run automatically (hestatus-migrate) before backend/poller start.
@@ -403,9 +403,9 @@ Reverse-proxy expectations:
 
 - [ ] Set a strong, unique `JWT_SECRET` (never ship the default).
 - [ ] Set a strong `POSTGRES_PASSWORD`.
-- [ ] Change `ADMIN_PASSWORD` (and the seeded admin's password) from `changeme`.
+- [ ] Set `ADMIN_EMAIL` before seeding. If you enable password login, give admins strong passwords (placeholders like `changeme` are always refused).
 - [ ] Run the app behind TLS (terminate HTTPS at your reverse proxy).
-- [ ] Leave `COOKIE_SECURE` at its production default (`true`) so session cookies are HTTPS-only — set `false` only for local http dev.
+- [ ] Leave `COOKIE_SECURE` unset so session cookies are HTTPS-only — set `false` only for local http dev.
 - [ ] Restrict database access to the app hosts only.
 - [ ] Configure `FRONTEND_URL`, `HOST`, and `TRUST_PROXY` to match your deployment.
 
