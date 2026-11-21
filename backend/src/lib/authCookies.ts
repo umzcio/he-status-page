@@ -31,15 +31,12 @@ function sessionMaxAgeSeconds(): number {
   }
 }
 
-// Secure flag: default true in production, false otherwise. COOKIE_SECURE
-// overrides explicitly ("false" => insecure, for local http dev; anything else
-// truthy => secure). Read at call time so tests/env changes take effect.
+// Secure flag: always on unless the operator opts out with COOKIE_SECURE=false
+// (local http dev only). It deliberately does not depend on NODE_ENV, so a
+// deployment that forgets NODE_ENV=production still gets HTTPS-only cookies.
+// Read at call time so tests/env changes take effect.
 function cookieSecure(): boolean {
-  const v = process.env.COOKIE_SECURE;
-  if (v === undefined || v === '') {
-    return process.env.NODE_ENV === 'production';
-  }
-  return v !== 'false';
+  return process.env.COOKIE_SECURE !== 'false';
 }
 
 // Flags shared by both cookies (evaluated at call time).

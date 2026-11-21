@@ -60,6 +60,18 @@ describe('webhook URLs are checked when saved', () => {
     expect(query.mock.calls.some((c) => /INSERT INTO teams_webhooks/.test(c[0]))).toBe(false);
   });
 
+  it('gives one fixed message whatever the host resolved to (or failed to)', async () => {
+    const messages = new Set<string>();
+    for (const webhookUrl of ['https://127.0.0.1/hook', 'https://169.254.169.254/x', 'https://localhost/hook', 'https://no-such-host.invalid/hook']) {
+      const res = await create(webhookUrl);
+      expect(res.status).toBe(400);
+      const { error } = (await res.json()) as { error: string };
+      expect(error).not.toMatch(/\d+\.\d+\.\d+\.\d+|::|ENOTFOUND|EAI_/);
+      messages.add(error);
+    }
+    expect(messages.size).toBe(1);
+  });
+
   it('rejects an unsafe URL on update too', async () => {
     const res = await fetch(`${url}/api/admin/webhooks/wh-1`, {
       method: 'PUT',

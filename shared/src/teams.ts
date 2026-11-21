@@ -1,5 +1,5 @@
 import { STATUS_COLORS, STATUS_ICONS, STATUS_LABELS } from './constants';
-import { createGuardedHttpClient } from './urlGuard';
+import { createGuardedHttpClient, isSsrfBlocked } from './urlGuard';
 import { cleanStatusText } from './text';
 
 // Teams / Power Automate webhooks are public HTTPS endpoints that never
@@ -147,9 +147,14 @@ export async function sendTeamsWebhook(
     await webhookHttp.post(webhookUrl, payload, { timeout: 10000 });
     return { success: true, responseTimeMs: Date.now() - start };
   } catch (err: any) {
-    // Only the status code: the target's response body is never echoed back
-    // to the admin API or stored in teams_webhook_logs.
-    const message = err.response ? `HTTP ${err.response.status}` : err.message;
+    // Only fixed text and the status code: the target's response body and the
+    // addresses the host resolved to are never echoed back to the admin API or
+    // stored in teams_webhook_logs.
+    const message = err.response
+      ? `HTTP ${err.response.status}`
+      : isSsrfBlocked(err)
+        ? 'Blocked by address policy'
+        : `Request failed${typeof err.code === 'string' && /^[A-Z_]+$/.test(err.code) ? ` (${err.code})` : ''}`;
     return { success: false, error: message, responseTimeMs: Date.now() - start };
   }
 }

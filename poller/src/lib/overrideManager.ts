@@ -19,7 +19,10 @@ export async function checkExpiredOverrides(): Promise<void> {
     await pool.query(`
       UPDATE service_status
       SET override_active = false,
-          override_expires_at = NULL
+          override_expires_at = NULL,
+          override_by_user_id = NULL,
+          override_at = NULL,
+          override_reason = NULL
       WHERE service_id = $1
     `, [row.service_id]);
 

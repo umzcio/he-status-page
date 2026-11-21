@@ -249,6 +249,19 @@ export async function resetUserPassword(id: string, password: string): Promise<v
   await adminApi.post(`${API_URL}/api/admin/users/${id}/reset-password`, { password });
 }
 
+export interface ActiveOverride {
+  service_id: string;
+  override_by: string | null;
+  override_at: string | null;
+  override_reason: string | null;
+}
+
+// Who set each active override (admin-only; not part of the public list).
+export async function getActiveOverrides(): Promise<ActiveOverride[]> {
+  const response = await adminApi.get(`${API_URL}/api/admin/services/overrides`);
+  return response.data.overrides;
+}
+
 export async function revokeUserSessions(id: string): Promise<void> {
   await adminApi.post(`${API_URL}/api/admin/users/${id}/revoke-sessions`);
 }

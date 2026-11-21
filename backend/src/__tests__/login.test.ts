@@ -119,6 +119,15 @@ describe('POST /api/admin/login', () => {
     expect(await res.json()).toEqual({ error: 'Invalid credentials' });
   });
 
+  it('refuses a well-known placeholder password even if an account was seeded with it', async () => {
+    users['legacy@example.edu'] = {
+      id: 'u3', email: 'legacy@example.edu', role: 'super_admin',
+      hashed_password: bcrypt.hashSync('changeme', 4), token_version: 0,
+    };
+    await start();
+    expect((await login('legacy@example.edu', 'changeme', '198.51.100.1')).status).toBe(401);
+  });
+
   it('sets the session cookies on success', async () => {
     await start();
     const res = await login('admin@example.edu', PASSWORD, '198.51.100.1');
@@ -196,6 +205,15 @@ describe('clientKey', () => {
     expect(clientKey('2001:db8::1')).toBe('2001:db8:0:0::/64');
     expect(clientKey('2001:db8:0:0:ffff:ffff:ffff:ffff')).toBe('2001:db8:0:0::/64');
     expect(clientKey('2001:db8:0:1::1')).toBe('2001:db8:0:1::/64');
-    expect(clientKey(undefined)).toBe('unknown');
+    expect(clientKey(undefined)).toBe('unparseable');
+  });
+
+  it('ignores ports and brackets, and never keys on an unreadable value', async () => {
+    const { clientKey } = await import('../lib/clientKey');
+    expect(clientKey('203.0.113.9:51234')).toBe(clientKey('203.0.113.9:443'));
+    expect(clientKey('203.0.113.9:51234')).toBe('203.0.113.9');
+    expect(clientKey('[2001:db8::1]:8080')).toBe('2001:db8:0:0::/64');
+    expect(clientKey('[2001:db8::1]')).toBe('2001:db8:0:0::/64');
+    expect(clientKey('garbage-1')).toBe(clientKey('garbage-2'));
   });
 });

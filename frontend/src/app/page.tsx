@@ -150,7 +150,7 @@ export default function Home() {
               setSubStatus('loading');
               setSubMessage('');
               try {
-                const result = await subscribe(subEmail, [], captchaToken || '');
+                const result = await subscribe(subEmail.trim(), [], captchaToken || '');
                 setSubStatus('success');
                 setSubMessage(result.message || 'Check your email to verify your subscription.');
                 setSubEmail('');

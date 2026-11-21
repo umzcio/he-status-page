@@ -1,11 +1,15 @@
 import { Router, Request, Response } from 'express';
 import { body, validationResult } from 'express-validator';
 import pool from '../db/connection';
+import type { PoolClient } from 'pg';
 import crypto from 'crypto';
 import { sendEmail, isEmailConfigured } from '../lib/email';
 import { verificationEmail } from '../lib/emailTemplates';
 import { escapeHtml } from '@he-status/shared';
 import { verifyTurnstile } from '../lib/turnstile';
+import { canonicalEduAddress } from '../lib/emailAddress';
+import { PgRateLimitStore } from '../lib/pgRateLimitStore';
+import type { Options } from 'express-rate-limit';
 
 const router = Router();
 
@@ -17,28 +21,41 @@ const SUBSCRIBE_RESPONSE = {
   message: 'Thanks! If this address can receive notifications, a confirmation email is on its way.',
 };
 
-// Send the verification mail without waiting for SMTP.
-function sendVerification(email: string, token: string): void {
-  if (!isEmailConfigured()) return;
-  const template = verificationEmail(token);
-  sendEmail({ to: email, subject: template.subject, html: template.html }).catch((err) =>
-    console.error('Failed to send verification email:', err)
-  );
+// Verification mail limits. Each address gets at most one verification mail
+// per RECIPIENT_INTERVAL, and the whole site at most GLOBAL_PER_HOUR per hour,
+// however many clients ask. (Per-client limits alone can't stop one address
+// from being mailed repeatedly from many addresses.)
+const RECIPIENT_INTERVAL = '1 hour';
+const GLOBAL_PER_HOUR = parseInt(process.env.VERIFICATION_MAIL_PER_HOUR || '200', 10);
+const globalMailStore = new PgRateLimitStore('verify_mail');
+globalMailStore.init({ windowMs: 60 * 60 * 1000 } as Options);
+
+async function claimGlobalMailSlot(): Promise<boolean> {
+  const { totalHits } = await globalMailStore.increment('all');
+  return totalHits <= GLOBAL_PER_HOUR;
+}
+
+interface VisibleService {
+  id: string;
+  name: string;
 }
 
 // The publicly visible services among `requested` (all of them if empty).
 // Hidden services can never be subscribed to from the public form.
-async function visibleServiceIds(requested: string[]): Promise<string[]> {
+async function visibleServices(requested: string[]): Promise<VisibleService[]> {
   const result = requested.length > 0
-    ? await pool.query('SELECT id FROM services WHERE visible IS NOT false AND id = ANY($1::uuid[])', [requested])
-    : await pool.query('SELECT id FROM services WHERE visible IS NOT false');
-  return result.rows.map((r: any) => r.id);
+    ? await pool.query(
+        'SELECT id, name FROM services WHERE visible IS NOT false AND id = ANY($1::uuid[]) ORDER BY name',
+        [requested]
+      )
+    : await pool.query('SELECT id, name FROM services WHERE visible IS NOT false ORDER BY name');
+  return result.rows;
 }
 
-async function setSubscriptionServices(subscriptionId: string, serviceIds: string[]): Promise<void> {
-  await pool.query('DELETE FROM subscription_services WHERE subscription_id = $1', [subscriptionId]);
+async function setSubscriptionServices(client: PoolClient, subscriptionId: string, serviceIds: string[]): Promise<void> {
+  await client.query('DELETE FROM subscription_services WHERE subscription_id = $1', [subscriptionId]);
   for (const serviceId of serviceIds) {
-    await pool.query(
+    await client.query(
       'INSERT INTO subscription_services (subscription_id, service_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
       [subscriptionId, serviceId]
     );
@@ -47,7 +64,7 @@ async function setSubscriptionServices(subscriptionId: string, serviceIds: strin
 
 // POST /api/subscriptions - Create new subscription
 router.post('/', [
-  body('email').isEmail().withMessage('Valid email required').normalizeEmail(),
+  body('email').isString().withMessage('Valid email required'),
   body('service_ids').optional().isArray({ max: 500 }),
   body('service_ids.*').isUUID().withMessage('Invalid service id'),
   body('turnstileToken').optional().isString(),
@@ -58,11 +75,13 @@ router.post('/', [
       return res.status(400).json({ error: errors.array()[0].msg });
     }
 
-    const { email, service_ids = [], turnstileToken } = req.body;
+    const { service_ids = [], turnstileToken } = req.body;
 
-    // Only allow .edu email addresses
-    if (!email.trim().toLowerCase().endsWith('.edu')) {
-      return res.status(400).json({ error: 'Only .edu email addresses are allowed' });
+    // A plain .edu address only: no whitespace, control characters or quoted
+    // local parts, and ".edu" checked on the real domain.
+    const email = canonicalEduAddress(req.body.email);
+    if (!email) {
+      return res.status(400).json({ error: 'Enter a plain .edu email address' });
     }
 
     // Verify Turnstile if configured
@@ -95,48 +114,77 @@ router.post('/', [
   }
 });
 
-// Create, reactivate, or re-send verification for a subscription. Runs after
-// the response has been sent (see POST /).
+// Create, reactivate, or re-confirm a subscription. Runs after the response
+// has been sent (see POST /).
+//
+// A verification link always activates exactly the services listed in the
+// email that carried it: every (re)send issues a new token and stores this
+// request's selection with it, replacing any earlier unconfirmed selection.
+// When no mail can be sent (throttled or capped), nothing is changed.
 async function processSubscription(email: string, requestedServiceIds: string[]): Promise<void> {
-  const serviceIds = await visibleServiceIds(requestedServiceIds);
+  if (!isEmailConfigured()) return;
 
-  // Check for existing subscription with same email
+  const services = await visibleServices(requestedServiceIds);
+  if (services.length === 0) return; // never create a subscription that covers nothing
+
   const existing = await pool.query(
-    'SELECT id, verified, unsubscribed_at, verification_token FROM subscriptions WHERE email = $1',
+    'SELECT id, verified, unsubscribed_at, verification_sent_at FROM subscriptions WHERE lower(email) = $1',
     [email]
   );
+  const sub = existing.rows[0];
+  if (sub && sub.verified && !sub.unsubscribed_at) return; // already active: nothing to do
 
-  if (existing.rows.length > 0) {
-    const sub = existing.rows[0];
-
-    if (sub.unsubscribed_at) {
-      // Previously unsubscribed — reactivate pending re-verification.
-      const newToken = crypto.randomBytes(32).toString('hex');
-      await pool.query(
-        `UPDATE subscriptions SET unsubscribed_at = NULL, verified = false, verification_token = $1 WHERE id = $2`,
-        [newToken, sub.id]
-      );
-      await setSubscriptionServices(sub.id, serviceIds);
-      sendVerification(email, newToken);
-    } else if (!sub.verified) {
-      // Active but unverified — resend verification.
-      sendVerification(email, sub.verification_token);
-    }
-    // Already active and verified: nothing to do.
+  if (!(await claimGlobalMailSlot())) {
+    console.warn('Verification mail cap reached; skipping a subscription request');
     return;
   }
 
-  // New subscription
   const token = crypto.randomBytes(32).toString('hex');
+  const client = await pool.connect();
+  let claimed = false;
+  try {
+    await client.query('BEGIN');
+    let subscriptionId: string | undefined;
+    if (sub) {
+      // Claim this address's mail slot; another request inside the interval wins nothing.
+      const updated = await client.query(
+        `UPDATE subscriptions
+            SET verification_token = $2, verification_sent_at = NOW(),
+                verified = false, unsubscribed_at = NULL
+          WHERE id = $1
+            AND (verification_sent_at IS NULL OR verification_sent_at < NOW() - INTERVAL '${RECIPIENT_INTERVAL}')
+            AND NOT (verified AND unsubscribed_at IS NULL)
+          RETURNING id`,
+        [sub.id, token]
+      );
+      subscriptionId = updated.rows[0]?.id;
+    } else {
+      const inserted = await client.query(
+        `INSERT INTO subscriptions (email, verification_token, verified, verification_sent_at)
+         VALUES ($1, $2, false, NOW())
+         ON CONFLICT ((lower(email))) DO NOTHING
+         RETURNING id`,
+        [email, token]
+      );
+      subscriptionId = inserted.rows[0]?.id;
+    }
 
-  const result = await pool.query(`
-    INSERT INTO subscriptions (email, verification_token, verified)
-    VALUES ($1, $2, false)
-    RETURNING id
-  `, [email, token]);
+    if (subscriptionId) {
+      await setSubscriptionServices(client, subscriptionId, services.map((s) => s.id));
+      claimed = true;
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 
-  await setSubscriptionServices(result.rows[0].id, serviceIds);
-  sendVerification(email, token);
+  if (claimed) {
+    const template = verificationEmail(token, services.map((s) => s.name));
+    await sendEmail({ to: email, subject: template.subject, html: template.html });
+  }
 }
 
 // GET /api/subscriptions/verify/:token - Verify subscription
@@ -148,7 +196,7 @@ router.get('/verify/:token', async (req, res) => {
       UPDATE subscriptions
       SET verified = true, verified_at = NOW()
       WHERE verification_token = $1 AND verified = false
-      RETURNING email
+      RETURNING id, email, verification_token
     `, [token]);
 
     if (result.rows.length === 0) {
@@ -160,11 +208,20 @@ router.get('/verify/:token', async (req, res) => {
       `);
     }
 
+    const sub = result.rows[0];
+    const covered = await pool.query(
+      `SELECT s.name FROM subscription_services ss JOIN services s ON s.id = ss.service_id
+        WHERE ss.subscription_id = $1 AND s.visible IS NOT false ORDER BY s.name`,
+      [sub.id]
+    );
+    const coverage = covered.rows.map((r: any) => `<li>${escapeHtml(r.name)}</li>`).join('');
     const publicUrl = process.env.PUBLIC_URL || 'http://localhost:3001';
     res.send(`
       <html><body style="font-family:Arial;text-align:center;padding:60px;">
         <h2 style="color:#22c55e;">Subscription Verified!</h2>
-        <p>You'll now receive status change notifications at <strong>${escapeHtml(result.rows[0].email)}</strong>.</p>
+        <p>You'll now receive status change notifications at <strong>${escapeHtml(sub.email)}</strong> for:</p>
+        <ul style="display:inline-block;text-align:left;">${coverage}</ul>
+        <p>Not what you wanted? <a href="${escapeHtml(publicUrl)}/api/subscriptions/unsubscribe/${escapeHtml(sub.verification_token)}">Unsubscribe</a> and sign up again.</p>
         <p><a href="${escapeHtml(publicUrl)}">Return to Status Page</a></p>
       </body></html>
     `);

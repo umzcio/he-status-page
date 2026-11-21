@@ -58,7 +58,10 @@ export async function updateServiceStatus(
         status_source = 'automated',
         status_message = $3,
         detected_at = NOW(),
-        last_checked_at = NOW()
+        last_checked_at = NOW(),
+        override_by_user_id = NULL,
+        override_at = NULL,
+        override_reason = NULL
       WHERE service_status.override_active = false
     `, [serviceId, status, message]);
 
@@ -76,6 +79,33 @@ export async function updateServiceStatus(
     throw error;
   } finally {
     client.release();
+  }
+}
+
+/**
+ * Record a check that found no status change. If the stored message is an
+ * automated one that differs from what the current code produces (e.g. text
+ * written by an older version), replace it in the current status and the open
+ * history row too, so stale wording doesn't stay public until the next change.
+ */
+export async function refreshAutomatedStatus(serviceId: string, message: string): Promise<void> {
+  await pool.query(
+    'UPDATE service_status SET last_checked_at = NOW() WHERE service_id = $1',
+    [serviceId]
+  );
+  const updated = await pool.query(
+    `UPDATE service_status SET status_message = $2
+      WHERE service_id = $1 AND override_active = false AND status_source = 'automated'
+        AND status_message IS DISTINCT FROM $2
+      RETURNING service_id`,
+    [serviceId, message]
+  );
+  if (updated.rows.length > 0) {
+    await pool.query(
+      `UPDATE status_history SET status_message = $2
+        WHERE service_id = $1 AND ended_at IS NULL AND status_source = 'automated'`,
+      [serviceId, message]
+    );
   }
 }
 

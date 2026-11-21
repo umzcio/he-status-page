@@ -37,7 +37,6 @@ router.get('/', async (req, res) => {
         ss.last_checked_at,
         ss.override_active,
         ss.override_at,
-        u.name as override_by,
         c.slug AS cat_slug,
         c.display_name AS cat_display_name,
         c.display_order AS cat_display_order,
@@ -76,7 +75,6 @@ router.get('/', async (req, res) => {
       FROM services s
       LEFT JOIN categories c ON s.category_id = c.id
       LEFT JOIN service_status ss ON s.id = ss.service_id
-      LEFT JOIN users u ON ss.override_by_user_id = u.id
       WHERE s.visible IS NOT false
       ORDER BY COALESCE(c.display_order, 999), s.display_order ASC
     `);

@@ -29,6 +29,7 @@ import { PgRateLimitStore } from './lib/pgRateLimitStore';
 import { resolveTrustProxy } from './lib/trustProxy';
 import { accountClientLimiter } from './lib/loginThrottle';
 import { clientKey } from './lib/clientKey';
+import { requireFirstPartyJson, allowCrossSiteNavigationOnly } from './lib/requestOrigin';
 import logger from './lib/logger';
 
 dotenv.config({ path: path.join(__dirname, '../../.env') });
@@ -55,6 +56,14 @@ if (process.env.PASSWORD_LOGIN_ENABLED === 'true' && !process.env.TURNSTILE_SECR
   );
 }
 
+if (process.env.SMTP_HOST && !process.env.TURNSTILE_SECRET_KEY && process.env.NODE_ENV === 'production') {
+  logger.warn(
+    'Email subscriptions are open without Turnstile. Abuse is bounded only by the per-client, ' +
+      'per-recipient (1/hour) and site-wide (VERIFICATION_MAIL_PER_HOUR) verification mail limits. ' +
+      'Set TURNSTILE_SECRET_KEY to require a CAPTCHA.'
+  );
+}
+
 // Bind to loopback by default so only a same-host reverse proxy can reach the
 // API. Containers and split-host deployments set HOST=0.0.0.0 explicitly.
 const HOST = process.env.HOST || '127.0.0.1';
@@ -76,6 +85,7 @@ const publicLimiter: express.RequestHandler = publicLimiterEnabled
     })
   : (_req, _res, next) => next();
 
+// Password login.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 15,
@@ -84,6 +94,31 @@ const authLimiter = rateLimit({
   keyGenerator: (req) => clientKey(req.ip),
   message: { error: 'Too many login attempts, please try again later' },
   store: new PgRateLimitStore('auth'),
+});
+
+// One-time code exchange: only failed exchanges count, so a genuine sign-in
+// is never refused because of other requests from the same address.
+const exchangeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => clientKey(req.ip),
+  message: { error: 'Too many sign-in attempts, please try again later' },
+  store: new PgRateLimitStore('exchange'),
+});
+
+// SSO redirects, callbacks and metadata. They only start or finish a flow at
+// the IdP, so the budget is generous and separate from the others.
+const ssoLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => clientKey(req.ip),
+  message: { error: 'Too many sign-in attempts, please try again later' },
+  store: new PgRateLimitStore('sso'),
 });
 
 const subscriptionLimiter = rateLimit({
@@ -135,12 +170,13 @@ app.use('/api/services', publicLimiter, servicesRoutes);
 app.use('/api/incidents', publicLimiter, incidentsRoutes);
 app.use('/api/admin/incidents', adminIncidentsRoutes);
 app.use('/api/admin/maintenance', adminMaintenanceRoutes);
-app.use('/api/admin/login', authLimiter, accountClientLimiter);
-app.use('/api/admin/cas', authLimiter);
-app.use('/api/admin/oidc', authLimiter);
-app.use('/api/admin/saml', authLimiter);
-// Rate-limit the one-time-code exchange (not the lightweight providers probe).
-app.use('/api/admin/auth/exchange', authLimiter);
+// Cross-site checks run before the limiters, so requests other sites trigger
+// never spend a visitor's budget (lib/requestOrigin.ts).
+app.use('/api/admin/login', requireFirstPartyJson, authLimiter, accountClientLimiter);
+app.use('/api/admin/cas', allowCrossSiteNavigationOnly, ssoLimiter);
+app.use('/api/admin/oidc', allowCrossSiteNavigationOnly, ssoLimiter);
+app.use('/api/admin/saml', allowCrossSiteNavigationOnly, ssoLimiter);
+app.use('/api/admin/auth/exchange', requireFirstPartyJson, exchangeLimiter);
 app.use('/api/admin/oidc', oidcRoutes);
 app.use('/api/admin/saml', samlRoutes);
 app.use('/api/admin', adminRoutes);
@@ -150,6 +186,11 @@ app.use('/api/admin/users', usersRoutes);
 app.use('/api/admin/notifications', notificationsRoutes);
 app.use('/api/admin/api-keys', apiKeysRoutes);
 app.use('/api/admin/webhooks', webhooksRoutes);
+// Subscribing is first-party JSON only. The verify/unsubscribe links are GETs
+// opened from email, so only the POST is restricted.
+app.use('/api/subscriptions', (req, res, next) =>
+  req.method === 'POST' ? requireFirstPartyJson(req, res, next) : next()
+);
 app.use('/api/subscriptions', subscriptionLimiter, subscriptionRoutes);
 
 // 404 handler

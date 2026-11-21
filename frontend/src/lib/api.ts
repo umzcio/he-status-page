@@ -31,7 +31,9 @@ export interface Service {
   last_checked_at: string;
   override_active: boolean;
   override_at: string | null;
-  override_by: string | null;
+  // Filled in on the admin dashboard from an authenticated route; the public
+  // list never includes it.
+  override_by?: string | null;
   status_since: string | null;
   affected_by: DependencyImpact[];
   upcoming_maintenance: UpcomingMaintenance | null;

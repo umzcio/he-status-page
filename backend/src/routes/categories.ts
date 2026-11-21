@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import pool from '../db/connection';
 import { authMiddleware, requireRole, AuthRequest } from './middleware/auth';
 import { requireCsrf } from './middleware/csrf';
-import { logAdminAction } from '../lib/adminLog';
+import { logAdminAction, inTransaction } from '../lib/adminLog';
 
 const router = Router();
 
@@ -32,15 +32,18 @@ router.post('/', authMiddleware, requireCsrf, requireRole('super_admin'), async 
       return res.status(400).json({ error: 'slug and display_name are required' });
     }
 
-    const result = await pool.query(`
-      INSERT INTO categories (slug, display_name, description, display_order)
-      VALUES ($1, $2, $3, $4)
-      RETURNING *
-    `, [slug, display_name, description || null, display_order || 0]);
+    // The change and its audit row commit together.
+    const created = await inTransaction(async (client) => {
+      const result = await client.query(`
+        INSERT INTO categories (slug, display_name, description, display_order)
+        VALUES ($1, $2, $3, $4)
+        RETURNING *
+      `, [slug, display_name, description || null, display_order || 0]);
+      await logAdminAction(req.user!.id, 'category_created', { slug, display_name }, client);
+      return result.rows[0];
+    });
 
-    await logAdminAction(req.user!.id, 'category_created', { slug, display_name });
-
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(created);
   } catch (error: any) {
     if (error.code === '23505') {
       return res.status(409).json({ error: 'Category slug already exists' });
@@ -89,24 +92,27 @@ router.put('/:id', authMiddleware, requireCsrf, requireRole('super_admin'), asyn
     const { id } = req.params;
     const { slug, display_name, description, display_order } = req.body;
 
-    const result = await pool.query(`
-      UPDATE categories
-      SET slug = COALESCE($1, slug),
-          display_name = COALESCE($2, display_name),
-          description = COALESCE($3, description),
-          display_order = COALESCE($4, display_order),
-          updated_at = NOW()
-      WHERE id = $5
-      RETURNING *
-    `, [slug, display_name, description, display_order, id]);
+    const updated = await inTransaction(async (client) => {
+      const result = await client.query(`
+        UPDATE categories
+        SET slug = COALESCE($1, slug),
+            display_name = COALESCE($2, display_name),
+            description = COALESCE($3, description),
+            display_order = COALESCE($4, display_order),
+            updated_at = NOW()
+        WHERE id = $5
+        RETURNING *
+      `, [slug, display_name, description, display_order, id]);
+      if (result.rows.length === 0) return null;
+      await logAdminAction(req.user!.id, 'category_updated', { id, slug, display_name }, client);
+      return result.rows[0];
+    });
 
-    if (result.rows.length === 0) {
+    if (!updated) {
       return res.status(404).json({ error: 'Category not found' });
     }
 
-    await logAdminAction(req.user!.id, 'category_updated', { id, slug, display_name });
-
-    res.json(result.rows[0]);
+    res.json(updated);
   } catch (error: any) {
     if (error.code === '23505') {
       return res.status(409).json({ error: 'Category slug already exists' });
@@ -133,13 +139,16 @@ router.delete('/:id', authMiddleware, requireCsrf, requireRole('super_admin'), a
       });
     }
 
-    const result = await pool.query('DELETE FROM categories WHERE id = $1 RETURNING slug', [id]);
+    const deleted = await inTransaction(async (client) => {
+      const result = await client.query('DELETE FROM categories WHERE id = $1 RETURNING slug', [id]);
+      if (result.rows.length === 0) return null;
+      await logAdminAction(req.user!.id, 'category_deleted', { id, slug: result.rows[0].slug }, client);
+      return result.rows[0];
+    });
 
-    if (result.rows.length === 0) {
+    if (!deleted) {
       return res.status(404).json({ error: 'Category not found' });
     }
-
-    await logAdminAction(req.user!.id, 'category_deleted', { id, slug: result.rows[0].slug });
 
     res.json({ success: true });
   } catch (error) {

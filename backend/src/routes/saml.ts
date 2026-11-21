@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import * as saml from '../lib/saml';
 import { issueAuthCode } from '../lib/authCode';
+import { ssoErrorUrl } from '../lib/ssoError';
 import pool from '../db/connection';
 
 // SAML 2.0 SSO routes, mounted under /api/admin/saml.
@@ -40,7 +41,7 @@ router.get('/login', async (req, res) => {
     res.redirect(url);
   } catch (err) {
     console.error('SAML login error:', err);
-    res.redirect(`${adminPath()}?error=${encodeURIComponent('SSO service error')}`);
+    res.redirect(ssoErrorUrl(adminPath(), 'unavailable'));
   }
 });
 
@@ -62,9 +63,7 @@ router.post('/callback', async (req, res) => {
 
     if (userResult.rows.length === 0) {
       console.log(`SAML user ${email} not authorized in HE Status`);
-      return res.redirect(
-        `${admin}?error=${encodeURIComponent('User not authorized. Contact your administrator for access.')}`
-      );
+      return res.redirect(ssoErrorUrl(admin, 'not_authorized'));
     }
 
     const user = userResult.rows[0];
@@ -75,7 +74,7 @@ router.post('/callback', async (req, res) => {
     res.redirect(`${admin}?code=${encodeURIComponent(code)}`);
   } catch (err) {
     console.error('SAML callback error:', err);
-    res.redirect(`${admin}?error=${encodeURIComponent('Authentication failed')}`);
+    res.redirect(ssoErrorUrl(admin, 'failed'));
   }
 });
 

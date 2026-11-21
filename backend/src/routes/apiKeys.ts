@@ -4,7 +4,7 @@ import bcrypt from 'bcrypt';
 import pool from '../db/connection';
 import { authMiddleware, requireRole, AuthRequest } from './middleware/auth';
 import { requireCsrf } from './middleware/csrf';
-import { logAdminAction } from '../lib/adminLog';
+import { logAdminAction, inTransaction } from '../lib/adminLog';
 
 const router = Router();
 
@@ -69,16 +69,22 @@ router.post('/', authMiddleware, requireCsrf, requireRole('super_admin'), async 
     const days = typeof expires_in_days === 'number' && expires_in_days > 0 ? expires_in_days : 365;
     const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 
-    const result = await pool.query(`
-      INSERT INTO api_keys (user_id, key_prefix, key_hash, name, expires_at)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING id, user_id, name, key_prefix, created_at, last_used_at, revoked_at, expires_at
-    `, [user_id, keyPrefix, keyHash, name || 'Default', expiresAt]);
+    // The key and its audit row commit together.
+    const result = await inTransaction(async (client) => {
+      const inserted = await client.query(`
+        INSERT INTO api_keys (user_id, key_prefix, key_hash, name, expires_at)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, user_id, name, key_prefix, created_at, last_used_at, revoked_at, expires_at
+      `, [user_id, keyPrefix, keyHash, name || 'Default', expiresAt]);
+      await logAdminAction(
+        req.user!.id, 'api_key_created',
+        { target_user_id: user_id, key_prefix: keyPrefix, name: name || 'Default' }, client
+      );
+      return inserted;
+    });
 
     // Get user email for response
     const userRow = await pool.query('SELECT email FROM users WHERE id = $1', [user_id]);
-
-    await logAdminAction(req.user!.id, 'api_key_created', { target_user_id: user_id, key_prefix: keyPrefix, name: name || 'Default' });
 
     res.status(201).json({
       key: { ...result.rows[0], user_email: userRow.rows[0].email },
@@ -98,17 +104,20 @@ router.delete('/:id', authMiddleware, requireCsrf, requireRole('super_admin'), a
   try {
     const { id } = req.params;
 
-    const result = await pool.query(`
-      UPDATE api_keys SET revoked_at = NOW()
-      WHERE id = $1 AND revoked_at IS NULL
-      RETURNING id, key_prefix
-    `, [id]);
+    const revoked = await inTransaction(async (client) => {
+      const result = await client.query(`
+        UPDATE api_keys SET revoked_at = NOW()
+        WHERE id = $1 AND revoked_at IS NULL
+        RETURNING id, key_prefix
+      `, [id]);
+      if (result.rows.length === 0) return null;
+      await logAdminAction(req.user!.id, 'api_key_revoked', { key_id: id, key_prefix: result.rows[0].key_prefix }, client);
+      return result.rows[0];
+    });
 
-    if (result.rows.length === 0) {
+    if (!revoked) {
       return res.status(404).json({ error: 'API key not found or already revoked' });
     }
-
-    await logAdminAction(req.user!.id, 'api_key_revoked', { key_id: id, key_prefix: result.rows[0].key_prefix });
 
     res.json({ success: true });
   } catch (error) {

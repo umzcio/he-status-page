@@ -185,7 +185,7 @@ describe('backend/src/routes/saml POST /callback authorization', () => {
     expect(redirect).toHaveBeenCalledOnce();
     const target = redirect.mock.calls[0][0] as string;
     expect(target).toContain('?error=');
-    expect(decodeURIComponent(target)).toContain('not authorized');
+    expect(target).toContain('?error=not_authorized');
     // Must NOT issue an auth code (no INSERT) for an unauthorized user.
     const insert = query.mock.calls.find((c) => /INSERT INTO auth_codes/i.test(c[0]));
     expect(insert).toBeUndefined();

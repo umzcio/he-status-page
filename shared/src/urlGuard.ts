@@ -1,5 +1,7 @@
 import dns from 'dns';
 import { lookup } from 'dns/promises';
+import http from 'http';
+import https from 'https';
 import net from 'net';
 import axios, { AxiosInstance } from 'axios';
 
@@ -25,6 +27,32 @@ import axios, { AxiosInstance } from 'axios';
  * endpoints used by internal adapters (e.g. LibreNMS "device:123" / "group:5")
  * pass through untouched.
  */
+
+/**
+ * Thrown when the address policy refuses a target. `message` carries the
+ * detail (host, resolved address) for server logs; anything shown to API
+ * callers should use PUBLIC_BLOCKED_MESSAGE, which reveals nothing about DNS.
+ */
+export class SsrfBlockedError extends Error {
+  readonly code = 'ERR_SSRF_BLOCKED';
+  constructor(detail: string) {
+    super(`Endpoint blocked by SSRF guard: ${detail}`);
+    this.name = 'SsrfBlockedError';
+  }
+}
+
+export const PUBLIC_BLOCKED_MESSAGE =
+  'This URL is not allowed: it must be an http(s) URL whose host resolves only to permitted addresses.';
+
+/** Whether `err` (or anything in its cause chain) is an address-policy refusal. */
+export function isSsrfBlocked(err: unknown): boolean {
+  let e: any = err;
+  for (let i = 0; e && i < 5; i++) {
+    if (e instanceof SsrfBlockedError || e.code === 'ERR_SSRF_BLOCKED') return true;
+    e = e.cause;
+  }
+  return false;
+}
 
 export interface GuardPolicy {
   /**
@@ -173,7 +201,21 @@ function classifyV6(b: number[]): AddressCategory {
   if (b[0] === 0xfe && (b[1] & 0xc0) === 0x80) return 'linklocal'; // fe80::/10
   if ((b[0] & 0xfe) === 0xfc) return 'private'; // fc00::/7 (ULA)
   if (b[0] === 0xff) return 'multicast'; // ff00::/8
+  // Only global unicast (2000::/3) can be public, and not its special-purpose
+  // blocks. IPv4-embedding forms outside NAT64's well-known prefix (handled in
+  // evaluateAddress) are refused outright rather than trusted.
+  if ((b[0] & 0xe0) !== 0x20) return 'reserved'; // incl. ::/96, ::ffff:0:0:0/96, 64:ff9b:1::/48
+  if (b[0] === 0x20 && b[1] === 0x01 && b[2] === 0x00 && b[3] <= 0x01) return 'reserved'; // 2001::/23 (incl. Teredo 2001::/32)
+  if (b[0] === 0x20 && b[1] === 0x01 && b[2] === 0x0d && b[3] === 0xb8) return 'reserved'; // 2001:db8::/32 documentation
+  if (b[0] === 0x20 && b[1] === 0x02) return 'reserved'; // 2002::/16 6to4
+  if (b[0] === 0x3f && b[1] === 0xff && (b[2] & 0xf0) === 0x00) return 'reserved'; // 3fff::/20 documentation
   return 'public';
+}
+
+/** The IPv4 address embedded in a NAT64 well-known-prefix address (64:ff9b::/96), if any. */
+function nat64Embedded(b: number[]): number[] | null {
+  const prefix = [0x00, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0];
+  return prefix.every((v, i) => b[i] === v) ? b.slice(12) : null;
 }
 
 // --- Metadata addresses (always blocked) ------------------------------------
@@ -206,7 +248,12 @@ export function evaluateAddress(address: string, policy: GuardPolicy = {}): stri
   const parsed = ipToBytes(address);
   if (!parsed) return `unparseable address "${address}"`;
 
-  const reduced = reduceMapped(parsed);
+  let reduced = reduceMapped(parsed);
+
+  // NAT64 (DNS64 on IPv6-only networks) reaches an IPv4 host through
+  // 64:ff9b::a.b.c.d; judge it by that IPv4 address.
+  const embedded = reduced.version === 6 ? nat64Embedded(reduced.bytes) : null;
+  if (embedded) reduced = { version: 4, bytes: embedded };
 
   if (METADATA_KEYS.has(bytesKey(reduced))) {
     return `cloud metadata address ${address}`;
@@ -262,12 +309,11 @@ export async function assertEndpointAllowed(endpoint: string, policy: GuardPolic
     try {
       resolved = await lookup(host, { all: true });
     } catch (err: any) {
-      throw new Error(
-        `Endpoint blocked by SSRF guard: could not resolve host "${host}" (${err?.code || err?.message || 'DNS error'})`,
+      throw new SsrfBlockedError(`could not resolve host "${host}" (${err?.code || err?.message || 'DNS error'})`,
       );
     }
     if (resolved.length === 0) {
-      throw new Error(`Endpoint blocked by SSRF guard: host "${host}" resolved to no addresses`);
+      throw new SsrfBlockedError(`host "${host}" resolved to no addresses`);
     }
     addresses = resolved.map((r) => r.address);
   }
@@ -275,7 +321,7 @@ export async function assertEndpointAllowed(endpoint: string, policy: GuardPolic
   for (const address of addresses) {
     const reason = evaluateAddress(address, policy);
     if (reason) {
-      throw new Error(`Endpoint blocked by SSRF guard: ${reason} (host "${host}")`);
+      throw new SsrfBlockedError(`${reason} (host "${host}")`);
     }
   }
 }
@@ -294,12 +340,12 @@ function stripBrackets(host: string): string {
  */
 export function assertTargetAllowed(protocol: string, hostname: string, policy: GuardPolicy = {}): void {
   if (protocol !== 'http:' && protocol !== 'https:') {
-    throw new Error(`Endpoint blocked by SSRF guard: unsupported protocol "${protocol}"`);
+    throw new SsrfBlockedError(`unsupported protocol "${protocol}"`);
   }
   const host = stripBrackets(hostname);
   if (net.isIP(host) !== 0) {
     const reason = evaluateAddress(host, policy);
-    if (reason) throw new Error(`Endpoint blocked by SSRF guard: ${reason}`);
+    if (reason) throw new SsrfBlockedError(`${reason}`);
   }
 }
 
@@ -320,12 +366,12 @@ export function createGuardedLookup(policy: GuardPolicy = {}, resolve: Resolver 
     resolve(hostname, (err, addresses) => {
       if (err) return callback(err, []);
       if (!addresses || addresses.length === 0) {
-        return callback(new Error(`Endpoint blocked by SSRF guard: host "${hostname}" resolved to no addresses`), []);
+        return callback(new SsrfBlockedError(`host "${hostname}" resolved to no addresses`), []);
       }
       for (const { address } of addresses) {
         const reason = evaluateAddress(address, policy);
         if (reason) {
-          return callback(new Error(`Endpoint blocked by SSRF guard: ${reason} (host "${hostname}")`), []);
+          return callback(new SsrfBlockedError(`${reason} (host "${hostname}")`), []);
         }
       }
       callback(null, addresses.map(({ address, family }) => ({ address, family: family === 6 ? 6 : 4 })));
@@ -354,18 +400,40 @@ export interface GuardedClientOptions extends GuardPolicy {
  */
 export function createGuardedHttpClient(options: GuardedClientOptions = {}): AxiosInstance {
   const policy: GuardPolicy = { allowPrivate: options.allowPrivate };
+  const guardedLookup = createGuardedLookup(policy, options.resolve);
+  const beforeRedirect = (redirect: Record<string, any>) => {
+    assertTargetAllowed(redirect.protocol, redirect.hostname, policy);
+  };
+  // This client's own connection pool. Sharing Node's global agents would let
+  // a request reuse a keep-alive socket some other (unguarded) client opened,
+  // skipping the connect-time lookup check.
+  const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 20 });
+  const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 20 });
+
   const client = axios.create({
     maxRedirects: options.maxRedirects ?? 5,
     maxContentLength: options.maxContentLength ?? 2 * 1024 * 1024,
-    lookup: createGuardedLookup(policy, options.resolve),
-    beforeRedirect: (redirect: Record<string, any>) => {
-      assertTargetAllowed(redirect.protocol, redirect.hostname, policy);
-    },
+    lookup: guardedLookup,
+    beforeRedirect,
+    httpAgent,
+    httpsAgent,
+    // Never send through HTTP(S)_PROXY: the guard would then check the proxy's
+    // address, not the target's.
+    proxy: false,
   });
   const deadlineMs = options.deadlineMs ?? 30_000;
   client.interceptors.request.use((config) => {
     const url = new URL(client.getUri(config));
     assertTargetAllowed(url.protocol, url.hostname, policy);
+    // Callers can't swap out the pieces the guard depends on.
+    config.lookup = guardedLookup;
+    config.beforeRedirect = beforeRedirect;
+    config.httpAgent = httpAgent;
+    config.httpsAgent = httpsAgent;
+    config.proxy = false;
+    config.socketPath = undefined;
+    config.transport = undefined;
+    config.adapter = 'http';
     config.signal = config.signal ?? AbortSignal.timeout(deadlineMs);
     return config;
   });

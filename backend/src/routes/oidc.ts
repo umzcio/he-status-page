@@ -2,6 +2,7 @@ import { Router } from 'express';
 import * as oidc from '../lib/oidc';
 import { issueAuthCode } from '../lib/authCode';
 import pool from '../db/connection';
+import { ssoErrorUrl } from '../lib/ssoError';
 
 // OIDC SSO routes, mounted under /api/admin/oidc.
 //
@@ -32,7 +33,7 @@ router.get('/login', async (req, res) => {
     res.redirect(url);
   } catch (err) {
     console.error('OIDC login error:', err);
-    res.redirect(`${adminPath()}?error=${encodeURIComponent('SSO service error')}`);
+    res.redirect(ssoErrorUrl(adminPath(), 'unavailable'));
   }
 });
 
@@ -43,13 +44,13 @@ router.get('/callback', async (req, res) => {
   try {
     const state = req.query.state as string | undefined;
     if (!state) {
-      return res.redirect(`${admin}?error=${encodeURIComponent('Invalid SSO response')}`);
+      return res.redirect(ssoErrorUrl(admin, 'failed'));
     }
 
     // Consume the flow state atomically. Missing/expired => reject.
     const flow = await oidc.consumeOidcFlow(state);
     if (!flow) {
-      return res.redirect(`${admin}?error=${encodeURIComponent('SSO session expired, please try again')}`);
+      return res.redirect(ssoErrorUrl(admin, 'expired'));
     }
 
     // client.callback validates signature/iss/aud/exp/nonce/state/PKCE and
@@ -75,9 +76,7 @@ router.get('/callback', async (req, res) => {
 
     if (userResult.rows.length === 0) {
       console.log(`OIDC user ${email} not authorized in HE Status`);
-      return res.redirect(
-        `${admin}?error=${encodeURIComponent('User not authorized. Contact your administrator for access.')}`
-      );
+      return res.redirect(ssoErrorUrl(admin, 'not_authorized'));
     }
 
     const user = userResult.rows[0];
@@ -88,7 +87,7 @@ router.get('/callback', async (req, res) => {
     res.redirect(`${admin}?code=${encodeURIComponent(code)}`);
   } catch (err) {
     console.error('OIDC callback error:', err);
-    res.redirect(`${admin}?error=${encodeURIComponent('Authentication failed')}`);
+    res.redirect(ssoErrorUrl(admin, 'failed'));
   }
 });
 

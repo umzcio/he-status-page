@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { endpointHttp, MAX_VENDOR_FEED_BYTES, fetchDeadline } from '../lib/endpointHttp';
+import { endpointHttp, MAX_ENDPOINT_RESPONSE_BYTES, fetchDeadline } from '../lib/endpointHttp';
 
 /**
  * Adapter for Apple System Status
@@ -9,12 +9,27 @@ import { endpointHttp, MAX_VENDOR_FEED_BYTES, fetchDeadline } from '../lib/endpo
 
 const APPLE_STATUS_URL = 'https://www.apple.com/support/systemstatus/data/system_status_en_US.js';
 
+/**
+ * The payload of a `jsonCallback(...)` JSONP wrapper, or null. Found with
+ * indexOf/lastIndexOf, so it takes linear time on any input: a backtracking
+ * regex here was quadratic on a large body with no closing parenthesis, and
+ * that ran synchronously on the event loop, stalling every other check.
+ */
+export function unwrapJsonp(body: string, callback = 'jsonCallback'): string | null {
+  const open = body.indexOf(`${callback}(`);
+  if (open < 0) return null;
+  const start = open + callback.length + 1;
+  const end = body.lastIndexOf(')');
+  return end > start ? body.slice(start, end) : null;
+}
+
 export async function fetchStatus(endpoint: string): Promise<any> {
   try {
     // Apple's system status page loads data from a JS file that contains JSON
     const response = await axios.get(APPLE_STATUS_URL, {
       timeout: 10000,
-      maxContentLength: MAX_VENDOR_FEED_BYTES,
+      // The real feed is a few hundred KB.
+      maxContentLength: MAX_ENDPOINT_RESPONSE_BYTES,
       signal: fetchDeadline(),
       headers: { 'User-Agent': 'HE-Status-Poller/1.0' },
     });
@@ -23,9 +38,9 @@ export async function fetchStatus(endpoint: string): Promise<any> {
     // Extract the JSON from within the callback wrapper
     let rawData = response.data;
     if (typeof rawData === 'string') {
-      const jsonMatch = rawData.match(/jsonCallback\(([\s\S]+)\)/);
-      if (jsonMatch) {
-        rawData = JSON.parse(jsonMatch[1]);
+      const payload = unwrapJsonp(rawData);
+      if (payload !== null) {
+        rawData = JSON.parse(payload);
       } else {
         // Try parsing as plain JSON
         try {

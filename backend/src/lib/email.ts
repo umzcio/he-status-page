@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { canonicalAddress } from './emailAddress';
 
 interface EmailMessage {
   to: string;
@@ -25,10 +26,18 @@ function getTransporter(): nodemailer.Transporter {
   // internal relay using a self-signed cert) — never silently.
   const rejectUnauthorized = process.env.SMTP_TLS_REJECT_UNAUTHORIZED !== 'false';
 
+  // On ports other than 465 (implicit TLS), insist on STARTTLS. Without
+  // requireTLS, nodemailer quietly continues in cleartext when the server's
+  // EHLO doesn't offer STARTTLS, so anyone on the path could strip it and read
+  // the SMTP password and every message. Opt out only for a relay that truly
+  // has no TLS, with SMTP_REQUIRE_TLS=false.
+  const requireTLS = port !== 465 && process.env.SMTP_REQUIRE_TLS !== 'false';
+
   transporter = nodemailer.createTransport({
     host,
     port,
     secure: port === 465,
+    requireTLS,
     auth: user && pass ? { user, pass } : undefined,
     tls: { rejectUnauthorized },
   });
@@ -37,11 +46,20 @@ function getTransporter(): nodemailer.Transporter {
 }
 
 export async function sendEmail(message: EmailMessage): Promise<void> {
-  const transport = getTransporter();
+  // Exactly one recipient, exactly as validated. The address is passed as an
+  // object (never parsed as an address list or "Name <addr>") and the SMTP
+  // envelope is set explicitly, so the mail goes to this mailbox and no other.
+  const to = canonicalAddress(message.to);
+  if (!to) {
+    throw new Error('Refusing to send: recipient is not a plain email address');
+  }
+  const fromAddress = process.env.EMAIL_FROM || 'status@example.edu';
 
+  const transport = getTransporter();
   await transport.sendMail({
-    from: `"${process.env.EMAIL_FROM_NAME || process.env.SITE_NAME || 'IT Status'}" <${process.env.EMAIL_FROM || 'status@example.edu'}>`,
-    to: message.to,
+    from: { name: process.env.EMAIL_FROM_NAME || process.env.SITE_NAME || 'IT Status', address: fromAddress },
+    to: { name: '', address: to },
+    envelope: { from: fromAddress, to: [to] },
     subject: message.subject,
     html: message.html,
   });
