@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import AdminServiceCategory from './AdminServiceCategory';
 import { getServices, ServicesResponse } from '../lib/api';
+import { getActiveOverrides } from '../lib/adminApi';
 import { errorMessage } from '../lib/errors';
 import styles from './AdminDashboard.module.css';
 
@@ -14,6 +15,21 @@ const fallbackCategoryTitles: { [key: string]: string } = {
   'infrastructure': 'Network & Infrastructure'
 };
 
+// The public services list plus who set each active override, which only the
+// authenticated admin API provides.
+async function loadDashboard(): Promise<ServicesResponse> {
+  const [result, overrides] = await Promise.all([getServices(), getActiveOverrides().catch(() => [])]);
+  const byService = new Map(overrides.map(o => [o.service_id, o.override_by]));
+  const withActor = <T extends { id: string }>(s: T) => ({ ...s, override_by: byService.get(s.id) ?? null });
+  return {
+    ...result,
+    services: result.services.map(withActor),
+    services_by_category: Object.fromEntries(
+      Object.entries(result.services_by_category).map(([slug, list]) => [slug, list.map(withActor)])
+    ),
+  };
+}
+
 export default function AdminDashboard() {
   const [data, setData] = useState<ServicesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +37,7 @@ export default function AdminDashboard() {
 
   async function fetchData() {
     try {
-      const result = await getServices();
+      const result = await loadDashboard();
       setData(result);
       setLastRefresh(new Date());
       setError(null);
@@ -34,7 +50,7 @@ export default function AdminDashboard() {
     let active = true;
     // Initial load: apply results in the async callback (not synchronously in the
     // effect body) so we don't trip react-hooks/set-state-in-effect.
-    getServices()
+    loadDashboard()
       .then(result => {
         if (!active) return;
         setData(result);

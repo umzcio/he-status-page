@@ -98,6 +98,13 @@ describe('public visibility of hidden services', () => {
     expect(text).not.toContain('Secret Backend');
   });
 
+  it('the public list never reads the users table', async () => {
+    await fetch(`${url}/api/services`);
+    const listQuery = query.mock.calls.map((c) => c[0] as string).find((sql) => /AS affected_by/.test(sql))!;
+    expect(listQuery).not.toMatch(/\busers\b/);
+    expect(listQuery).not.toMatch(/override_by/);
+  });
+
   it('a malformed service id is 404, not 500', async () => {
     expect((await fetch(`${url}/api/services/not-a-uuid`)).status).toBe(404);
   });

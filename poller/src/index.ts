@@ -8,7 +8,7 @@ import { resilientFetch } from './lib/resilience';
 import { publicFetchFailureMessage } from './lib/fetchErrors';
 import { CheckAbortedError, checkSignal, throwIfCheckAborted } from './lib/checkContext';
 import { createCheckRunner } from './lib/checkRunner';
-import { getCurrentStatus, updateServiceStatus, updateLastChecked, logPollerCheck } from './lib/statusUpdater';
+import { getCurrentStatus, updateServiceStatus, refreshAutomatedStatus, logPollerCheck } from './lib/statusUpdater';
 import { checkExpiredOverrides } from './lib/overrideManager';
 import { activateDueMaintenances, completeExpiredMaintenances, completeMissedMaintenances } from './lib/maintenanceManager';
 import { queueNotifications, notifyDependents } from './lib/notificationQueue';
@@ -169,7 +169,7 @@ async function checkServiceStatus(service: Service): Promise<void> {
       }
     } else {
       log.debug({ status: normalizedStatus.status }, 'No change');
-      await updateLastChecked(service.id);
+      await refreshAutomatedStatus(service.id, normalizedStatus.message);
     }
 
     // Log the check (a failed fetch is recorded with its full error message)

@@ -63,6 +63,23 @@ router.get('/', authMiddleware, requireCsrf, async (req: AuthRequest, res: Respo
   }
 });
 
+// GET /api/admin/services/overrides - Who set each active override. Kept off
+// the public services list: user names are admin-only data.
+router.get('/overrides', authMiddleware, requireCsrf, async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await pool.query(`
+      SELECT ss.service_id, u.name AS override_by, ss.override_at, ss.override_reason
+        FROM service_status ss
+        LEFT JOIN users u ON ss.override_by_user_id = u.id
+       WHERE ss.override_active = true
+    `);
+    res.json({ overrides: result.rows });
+  } catch (error) {
+    console.error('Error fetching overrides:', error);
+    res.status(500).json({ error: 'Failed to fetch overrides' });
+  }
+});
+
 // POST /api/admin/services - Create service
 router.post('/', authMiddleware, requireCsrf, requireRole('super_admin'), async (req: AuthRequest, res: Response) => {
   const client = await pool.connect();
